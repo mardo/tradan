@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment — NEVER commit secrets
+.env
+
+# Wallet keypair files — NEVER commit private keys
+*.json
+!package.json
+!tsconfig.json
+
+# Cloned reference repos
+keeper-bots-v2/
+client-scripts/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Logs
+*.log
+logs/

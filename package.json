@@ -1,0 +1,30 @@
+{
+  "name": "tradan",
+  "version": "1.0.0",
+  "description": "Drift + Ranger perpetuals trading strategy vault — Tradan (tradan.xyz)",
+  "main": "index.js",
+  "scripts": {
+    "bot": "ts-node bot/strategy.ts",
+    "init-strategy": "ts-node scripts/init-strategy.ts",
+    "fund-strategy": "ts-node scripts/fund-strategy.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.30.1",
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@drift-labs/sdk": "2.161.0-beta.0",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
+    "@voltr/vault-sdk": "^1.0.20",
+    "dotenv": "^17.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
