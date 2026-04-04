@@ -1,0 +1,20 @@
+[project]
+name = "ingester"
+version = "0.1.0"
+description = "Binance USDT-M futures kline ingester"
+readme = "README.md"
+authors = [
+    { name = "Mardo Del Cid", email = "mardodcp@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "psycopg[binary]>=3.3.3",
+    "python-dotenv>=1.2.2",
+]
+
+[project.scripts]
+ingest = "ingester.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
