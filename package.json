@@ -8,7 +8,10 @@
     "init-strategy": "ts-node scripts/init-strategy.ts",
     "fund-strategy": "ts-node scripts/fund-strategy.ts",
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "dev:backend": "cd backend && uv run uvicorn ingester.api:app --reload --port 8000",
+    "dev:frontend": "pnpm --filter @tradan/frontend run dev",
+    "dev": "concurrently -n backend,frontend -c cyan,magenta \"pnpm dev:backend\" \"pnpm dev:frontend\""
   },
   "keywords": [],
   "author": "",
@@ -24,6 +27,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
+    "concurrently": "^9.2.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }

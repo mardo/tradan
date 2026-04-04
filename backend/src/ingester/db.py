@@ -4,7 +4,9 @@ Database connection factory and migration runner.
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Generator
 
 import psycopg
 
@@ -29,6 +31,16 @@ def _exec_migration_sql(conn: psycopg.Connection, sql: str) -> None:
 def connect() -> psycopg.Connection:
     """Open a new synchronous psycopg3 connection."""
     return psycopg.connect(get_database_url())
+
+
+@contextmanager
+def get_conn() -> Generator[psycopg.Connection, None, None]:
+    """Yield an open connection and close it on exit (commit/rollback handled by caller)."""
+    conn = connect()
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
