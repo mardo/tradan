@@ -16,11 +16,14 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import multiprocessing
-import sys
+import os
 from typing import Iterable
 
 from .db import connect, migrate
+from .logutil import configure_logging, get_logger
 from .worker import run_worker
+
+_cli_log = get_logger("cli")
 
 ALL_INTERVALS = [
     "12h", "15m", "1d", "1h", "1m", "1mo", "1w",
@@ -89,6 +92,10 @@ def cmd_enqueue(args: argparse.Namespace) -> None:
 
 
 def cmd_run(args: argparse.Namespace) -> None:
+    lvl = args.log_level.strip().upper()
+    os.environ["INGEST_LOG_LEVEL"] = lvl
+    configure_logging(lvl)
+
     n = max(1, args.workers)
 
     # Recover any stale 'running' jobs left by a previously killed process
@@ -104,11 +111,11 @@ def cmd_run(args: argparse.Namespace) -> None:
         )
         conn.commit()
         if result.rowcount:
-            print(f"[run] Recovered {result.rowcount} stale running job(s).")
+            _cli_log.warning("Recovered stale running jobs count=%s", result.rowcount)
     finally:
         conn.close()
 
-    print(f"[run] Spawning {n} worker(s)…")
+    _cli_log.info("Spawning workers count=%s log_level=%s", n, lvl)
     processes = [
         multiprocessing.Process(target=run_worker, daemon=False)
         for _ in range(n)
@@ -117,7 +124,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         p.start()
     for p in processes:
         p.join()
-    print("[run] All workers finished.")
+    _cli_log.info("All workers finished.")
 
 
 def cmd_status(_args: argparse.Namespace) -> None:
@@ -215,6 +222,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--workers", type=int, default=1,
         help="Number of parallel worker processes (default: 1)",
     )
+    rn.add_argument(
+        "--log-level",
+        default=os.environ.get("INGEST_LOG_LEVEL", "INFO"),
+        metavar="LEVEL",
+        help=(
+            "Log level for worker processes: DEBUG, INFO, WARNING, ERROR "
+            "(default: INFO, or INGEST_LOG_LEVEL env)"
+        ),
+    )
 
     # status
     sub.add_parser("status", help="Show job counts by status")
@@ -246,6 +262,8 @@ _COMMANDS = {
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    if args.command != "run":
+        configure_logging()
     _COMMANDS[args.command](args)
 
 

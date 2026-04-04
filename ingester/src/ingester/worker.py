@@ -13,8 +13,11 @@ import psycopg
 import psycopg.rows
 
 from .db import connect
-from .downloader import fetch_zip
+from .downloader import build_url, fetch_zip
+from .logutil import configure_logging, get_logger, job_extra
 from .parser import parse_zip
+
+_log = get_logger("worker")
 
 _CLAIM_SQL = """
 SELECT id, symbol, interval, year, month
@@ -41,10 +44,15 @@ ON CONFLICT (symbol, interval, open_time) DO NOTHING
 _BATCH_SIZE = 5_000
 
 
-def _insert_rows(conn: psycopg.Connection, rows: list[dict]) -> int:
-    """Bulk-insert a batch of kline rows. Returns number inserted."""
+def _insert_rows(
+    conn: psycopg.Connection, rows: list[dict], job_id: int, label: str
+) -> int:
+    """Bulk-insert a batch of kline rows. Returns batch size (not exact insert count)."""
+    extra = {"job_id": job_id, "job_label": label}
     with conn.transaction():
-        conn.executemany(_INSERT_KLINE_SQL, rows)
+        with conn.cursor() as cur:
+            cur.executemany(_INSERT_KLINE_SQL, rows)
+    _log.debug("Inserted batch size=%s", len(rows), extra=extra)
     return len(rows)
 
 
@@ -57,21 +65,28 @@ def _process_job(
     month: int,
 ) -> None:
     label = f"{symbol}/{interval} {year:04d}-{month:02d}"
-    pid = os.getpid()
-    print(f"[worker {pid}] Downloading {label}")
+    ex = job_extra(job_id, symbol, interval, year, month)
+    url = build_url(symbol, interval, year, month)
+
+    _log.info("Start job url=%s", url, extra=ex)
 
     zip_bytes = fetch_zip(symbol, interval, year, month)
 
-    print(f"[worker {pid}] Parsing {label} ({len(zip_bytes):,} bytes)")
+    _log.info("Downloaded zip bytes=%s", f"{len(zip_bytes):,}", extra=ex)
     batch: list[dict] = []
-    total = 0
+    total_rows = 0
+    batches = 0
     for row in parse_zip(zip_bytes, symbol, interval):
         batch.append(row)
         if len(batch) >= _BATCH_SIZE:
-            total += _insert_rows(conn, batch)
+            _insert_rows(conn, batch, job_id, label)
+            total_rows += len(batch)
+            batches += 1
             batch.clear()
     if batch:
-        total += _insert_rows(conn, batch)
+        _insert_rows(conn, batch, job_id, label)
+        total_rows += len(batch)
+        batches += 1
 
     with conn.transaction():
         conn.execute(
@@ -83,7 +98,12 @@ def _process_job(
             (datetime.now(timezone.utc), job_id),
         )
 
-    print(f"[worker {pid}] Done {label} — {total:,} rows inserted")
+    _log.info(
+        "Job done rows_processed=%s insert_batches=%s (ON CONFLICT may skip duplicates)",
+        f"{total_rows:,}",
+        batches,
+        extra=ex,
+    )
 
 
 def _mark_failed(conn: psycopg.Connection, job_id: int, error: str) -> None:
@@ -98,7 +118,7 @@ def _mark_failed(conn: psycopg.Connection, job_id: int, error: str) -> None:
         )
         conn.commit()
     except Exception:
-        pass
+        _log.exception("Could not persist job failure to DB job_id=%s", job_id)
 
 
 def run_worker() -> None:
@@ -106,7 +126,9 @@ def run_worker() -> None:
     Main loop for a single worker process.
     Keeps claiming and processing jobs until the queue is empty.
     """
+    configure_logging()
     pid = os.getpid()
+    _log.info("Worker started pid=%s", pid)
     conn = connect()
     conn.autocommit = False
 
@@ -114,40 +136,48 @@ def run_worker() -> None:
         while True:
             # Claim one pending job atomically
             with conn.transaction():
-                row = conn.execute(
-                    _CLAIM_SQL,
-                    row_factory=psycopg.rows.dict_row,  # type: ignore[call-arg]
-                ).fetchone()
+                with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+                    cur.execute(_CLAIM_SQL)
+                    row = cur.fetchone()
 
-                if row is None:
-                    print(f"[worker {pid}] No more pending jobs — exiting.")
-                    return
+                    if row is None:
+                        _log.info("No pending jobs left; worker exiting pid=%s", pid)
+                        return
 
-                job_id = row["id"]
-                conn.execute(
-                    """
-                    UPDATE ingest_jobs
-                    SET status = 'running', claimed_at = %s
-                    WHERE id = %s
-                    """,
-                    (datetime.now(timezone.utc), job_id),
-                )
+                    job_id = row["id"]
+                    cur.execute(
+                        """
+                        UPDATE ingest_jobs
+                        SET status = 'running', claimed_at = %s
+                        WHERE id = %s
+                        """,
+                        (datetime.now(timezone.utc), job_id),
+                    )
+
+            sym, inv, yr, mo = (
+                row["symbol"],
+                row["interval"],
+                row["year"],
+                row["month"],
+            )
+            jl = f"{sym}/{inv} {yr:04d}-{mo:02d}"
+            _log.info("Claimed job %s", jl, extra=job_extra(job_id, sym, inv, yr, mo))
 
             try:
-                _process_job(
-                    conn,
-                    job_id,
-                    row["symbol"],
-                    row["interval"],
-                    row["year"],
-                    row["month"],
-                )
+                _process_job(conn, job_id, sym, inv, yr, mo)
             except FileNotFoundError as exc:
-                print(f"[worker {pid}] Missing file, marking failed: {exc}")
+                _log.warning(
+                    "Job failed (missing remote file): %s",
+                    exc,
+                    extra=job_extra(job_id, sym, inv, yr, mo),
+                )
                 _mark_failed(conn, job_id, str(exc))
-            except Exception as exc:
-                tb = traceback.format_exc()
-                print(f"[worker {pid}] Error processing job {job_id}:\n{tb}")
-                _mark_failed(conn, job_id, tb)
+            except Exception:
+                _log.exception(
+                    "Job failed",
+                    extra=job_extra(job_id, sym, inv, yr, mo),
+                )
+                err = traceback.format_exc()
+                _mark_failed(conn, job_id, err)
     finally:
         conn.close()

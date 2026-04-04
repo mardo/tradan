@@ -10,7 +10,20 @@ import psycopg
 
 from .config import get_database_url
 
-MIGRATIONS_DIR = Path(__file__).parent.parent.parent.parent / "migrations"
+MIGRATIONS_DIR = Path(__file__).resolve().parent.parent.parent / "migrations"
+
+
+def _exec_migration_sql(conn: psycopg.Connection, sql: str) -> None:
+    """Run a migration file as one or more statements (split on ';')."""
+    for part in sql.split(";"):
+        lines = [
+            ln
+            for ln in part.splitlines()
+            if ln.strip() and not ln.strip().startswith("--")
+        ]
+        stmt = "\n".join(lines).strip()
+        if stmt:
+            conn.execute(stmt)
 
 
 def connect() -> psycopg.Connection:
@@ -57,7 +70,7 @@ def migrate(conn: psycopg.Connection | None = None) -> list[str]:
 
             sql = path.read_text()
             with conn.transaction():
-                conn.execute(sql)
+                _exec_migration_sql(conn, sql)
                 conn.execute(
                     "INSERT INTO _migrations (name) VALUES (%s)", (name,)
                 )

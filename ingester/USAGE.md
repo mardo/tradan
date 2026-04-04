@@ -32,7 +32,7 @@ Copy the example env file and fill in your connection string:
 cp .env.example .env
 ```
 
-Edit `.env`:
+Edit `.env` in **`ingester/`** (next to `pyproject.toml`), not the monorepo root — that is the file the app loads.
 
 ```dotenv
 # Standard Postgres
@@ -144,6 +144,24 @@ Pass `--help` to any sub-command for full argument details:
 ```bash
 uv run ingest enqueue --help
 ```
+
+---
+
+## Diagnostic logging (share with support / debugging)
+
+All structured logs go to **stderr** with timestamps, process id, and (for worker lines) `job_id` plus a `symbol/interval YYYY-MM` label.
+
+```bash
+# Verbose: log every download URL, batch inserts, HTTP body previews on errors
+PYTHONUNBUFFERED=1 uv run ingest run --workers 4 --log-level DEBUG 2>&1 | tee ingest-debug.log
+```
+
+Or set `INGEST_LOG_LEVEL=DEBUG` in `.env` (used when you omit `--log-level`).
+
+What to look for in a log excerpt:
+
+- **`ingester.downloader`**: HTTP status, 404 vs other errors, optional response body preview.
+- **`ingester.worker`**: `Claimed job`, `Start job url=…`, `Downloaded zip bytes=…`, `Job done`, or `Job failed` with stack trace.
 
 ---
 
