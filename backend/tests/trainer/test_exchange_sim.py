@@ -46,10 +46,10 @@ class TestLeverageCalculation:
         )
         assert leverage <= exchange.config.max_leverage
 
-    def test_tight_sl_gives_lower_leverage(self, exchange: ExchangeSim):
+    def test_tight_sl_allows_higher_leverage(self, exchange: ExchangeSim):
         wide = exchange.compute_leverage(50_000.0, 45_000.0, 1)
         tight = exchange.compute_leverage(50_000.0, 49_500.0, 1)
-        assert tight < wide
+        assert tight > wide
 
 
 class TestPlaceOrder:

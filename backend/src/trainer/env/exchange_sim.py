@@ -71,10 +71,8 @@ class ExchangeSim:
             return 1.0
         mm = self.config.maintenance_margin_pct / 100.0
         buf = self.config.liquidation_buffer_pct / 100.0
-        safe_dist = sl_dist_pct - buf
-        if safe_dist <= 0:
-            return 1.0
-        leverage = safe_dist / mm
+        denominator = sl_dist_pct + buf + mm
+        leverage = 1.0 / denominator
         return min(leverage, self.config.max_leverage)
 
     def liquidation_price(
