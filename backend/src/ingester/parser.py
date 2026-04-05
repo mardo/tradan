@@ -23,18 +23,28 @@ import zipfile
 from decimal import Decimal
 from typing import Iterator
 
+# Binance switched some 2025+ CSV files to microsecond precision.
+# Any ms timestamp above this value is ~year 2286, well beyond any real candle;
+# values this large were written in µs and need to be divided by 1000.
+_MAX_VALID_MS = 9_999_999_999_999
+
+
+def _to_ms(ts: int) -> int:
+    """Normalise a timestamp to milliseconds, dividing by 1000 if it looks like µs."""
+    return ts // 1000 if ts > _MAX_VALID_MS else ts
+
 
 def _to_row(symbol: str, interval: str, fields: list[str]) -> dict:
     return {
         "symbol": symbol,
         "interval": interval,
-        "open_time": int(fields[0]),
+        "open_time": _to_ms(int(fields[0])),
         "open": Decimal(fields[1]),
         "high": Decimal(fields[2]),
         "low": Decimal(fields[3]),
         "close": Decimal(fields[4]),
         "volume": Decimal(fields[5]),
-        "close_time": int(fields[6]),
+        "close_time": _to_ms(int(fields[6])),
         "quote_volume": Decimal(fields[7]),
         "num_trades": int(fields[8]),
         "taker_buy_base_vol": Decimal(fields[9]),

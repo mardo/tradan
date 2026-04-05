@@ -19,6 +19,13 @@ from .logutil import get_logger
 
 _log = get_logger("ccxt_fetcher")
 
+_MAX_VALID_MS = 9_999_999_999_999
+
+
+def _to_ms(ts: int) -> int:
+    """Normalise a timestamp to milliseconds, dividing by 1000 if it looks like µs."""
+    return ts // 1000 if ts > _MAX_VALID_MS else ts
+
 # Map ingester interval names → ccxt timeframe strings
 INTERVAL_TO_TF: dict[str, str] = {
     "1m": "1m",
@@ -136,7 +143,7 @@ def fetch_month_klines(
 
         yielded_in_batch = 0
         for candle in ohlcv:
-            open_time: int = candle[0]
+            open_time: int = _to_ms(candle[0])
             if open_time > end_ms:
                 _log.info(
                     "ccxt fetch done (past month end) sym=%s interval=%s total=%s",
@@ -169,7 +176,7 @@ def fetch_month_klines(
         if yielded_in_batch == 0:
             break
 
-        last_open: int = ohlcv[-1][0]
+        last_open: int = _to_ms(ohlcv[-1][0])
         if interval == "1mo":
             since = last_open + 32 * 86_400_000  # advance ~1 month safely
         else:

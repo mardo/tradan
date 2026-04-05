@@ -74,14 +74,18 @@ def migrate(conn: psycopg.Connection | None = None) -> list[str]:
 
         for path in sql_files:
             name = path.name
-            row = conn.execute(
-                "SELECT 1 FROM _migrations WHERE name = %s", (name,)
-            ).fetchone()
-            if row:
-                continue
-
-            sql = path.read_text()
+            # One transaction per file: SELECT must run inside the same block as
+            # DDL/INSERT. Otherwise the SELECT opens an outer tx and
+            # conn.transaction() nests a savepoint only; closing the connection
+            # rolls back the outer tx and undoes migrations while still printing
+            # "Applied".
             with conn.transaction():
+                row = conn.execute(
+                    "SELECT 1 FROM _migrations WHERE name = %s", (name,)
+                ).fetchone()
+                if row:
+                    continue
+                sql = path.read_text()
                 _exec_migration_sql(conn, sql)
                 conn.execute(
                     "INSERT INTO _migrations (name) VALUES (%s)", (name,)

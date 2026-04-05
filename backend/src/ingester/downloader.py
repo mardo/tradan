@@ -10,7 +10,8 @@ from urllib.request import Request, urlopen
 from .logutil import get_logger
 
 DATA_HOST = "https://data.binance.vision"
-BASE_PREFIX = "data/futures/um/monthly"
+# BASE_PREFIX = "data/futures/um/monthly"
+BASE_PREFIX = "data/spot/monthly"
 
 _HEADERS = {"User-Agent": "Mozilla/5.0"}
 
