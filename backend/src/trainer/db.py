@@ -144,20 +144,21 @@ def save_pnl_snapshots(
 ) -> None:
     if not snapshots:
         return
-    conn.executemany(
-        """
-        INSERT INTO pnl_snapshots
-            (training_run_id, step, candle_time, balance, equity,
-             unrealized_pnl, open_position_count, open_order_count)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """,
-        [
-            (s["training_run_id"], s["step"], s["candle_time"],
-             s["balance"], s["equity"], s["unrealized_pnl"],
-             s["open_position_count"], s["open_order_count"])
-            for s in snapshots
-        ],
-    )
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO pnl_snapshots
+                (training_run_id, step, candle_time, balance, equity,
+                 unrealized_pnl, open_position_count, open_order_count)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            [
+                (s["training_run_id"], s["step"], s["candle_time"],
+                 s["balance"], s["equity"], s["unrealized_pnl"],
+                 s["open_position_count"], s["open_order_count"])
+                for s in snapshots
+            ],
+        )
     conn.commit()
 
 
