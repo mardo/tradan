@@ -13,10 +13,17 @@ dependencies = [
     "psycopg[binary]>=3.3.3",
     "python-dotenv>=1.2.2",
     "uvicorn[standard]>=0.43.0",
+    "gymnasium>=1.0.0",
+    "stable-baselines3>=2.4.0",
+    "torch>=2.2.0",
+    "numpy>=1.26.0",
+    "pandas>=2.2.0",
+    "pytest>=8.0.0",
 ]
 
 [project.scripts]
 ingest = "ingester.cli:main"
+train = "trainer.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.10.4,<0.11.0"]
