@@ -66,11 +66,28 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     evaluate_model(config, model_path, algorithm=run.get("algorithm"))
 
 
-def cmd_list(_args: argparse.Namespace) -> None:
+def cmd_list(args: argparse.Namespace) -> None:
     models = list_model_configs()
+
+    names_only = getattr(args, "names_only", False)
+    status_filter = getattr(args, "status", None)
+
+    # "pending"   = models with zero completed runs (not yet trained)
+    # "completed" = models with at least one completed run
+    if status_filter == "pending":
+        models = [m for m in models if m["run_count"] == 0]
+    elif status_filter == "completed":
+        models = [m for m in models if m["run_count"] > 0]
+
+    if names_only:
+        for m in models:
+            print(m["name"])
+        return
+
     if not models:
         print("No models registered.")
         return
+
     print(f"{'Name':<20} {'Runs':>6} {'Best PnL':>12} {'Created'}")
     print("-" * 60)
     for m in models:
@@ -127,7 +144,19 @@ def build_parser() -> argparse.ArgumentParser:
     ev.add_argument("--model", required=True, help="Model name")
     ev.add_argument("--run", type=int, required=True, help="Training run ID to evaluate")
 
-    sub.add_parser("list", help="List all registered models")
+    ls = sub.add_parser("list", help="List all registered models")
+    ls.add_argument(
+        "--names-only",
+        action="store_true",
+        dest="names_only",
+        help="Print only model names, one per line (for use with GNU parallel)",
+    )
+    ls.add_argument(
+        "--status",
+        choices=["pending", "completed"],
+        default=None,
+        help="Filter: pending = no completed runs, completed = has completed runs",
+    )
 
     sr = sub.add_parser("status", help="Show details for a training run")
     sr.add_argument("--run", type=int, required=True, help="Run ID")
