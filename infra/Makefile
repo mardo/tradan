@@ -5,16 +5,26 @@
 #   export TF_VAR_db_password="..."
 #   export TF_VAR_ssh_key_fingerprint="..."
 #   export TF_VAR_git_repo_url="git@github.com:yourorg/tradan.git"
-#   export TF_VAR_operator_ip="$$(curl -s ifconfig.me)/32"
+#
+# operator_ip is auto-detected from your current public IP on every apply.
+# No need to export it — the Makefile handles it automatically.
 
 TF      := terraform
 SCRIPTS := $(CURDIR)/scripts
+
+# Auto-detect current public IP for the SSH firewall rule.
+# Resolved once per make invocation so all targets use a consistent IP.
+MY_IP = $(shell curl -sf https://ifconfig.me 2>/dev/null || curl -sf https://api.ipify.org 2>/dev/null || echo "0.0.0.0")
+MY_IP_CIDR = $(MY_IP)/32
+
+# Shared terraform apply flags: always pass current IP + allow target overrides
+TF_APPLY = $(TF) apply -var="operator_ip=$(MY_IP_CIDR)"
 
 # Read live Terraform outputs (empty string if resource doesn't exist yet)
 BASE_IP  = $(shell $(TF) output -raw base_ip 2>/dev/null || echo "")
 TRAIN_IP = $(shell $(TF) output -raw train_ip 2>/dev/null || echo "")
 
-.PHONY: init base-up train-up train-down base-ssh train-ssh \
+.PHONY: init base-up train-up train-down update-ip base-ssh train-ssh \
         sweep-phase1 sweep-phase2 sweep-phase3 \
         winners evaluate status
 
@@ -24,7 +34,8 @@ init:
 
 ## base-up: Provision base droplet + block volume (first-time setup)
 base-up:
-	$(TF) apply \
+	@echo "Your current IP: $(MY_IP_CIDR)"
+	$(TF_APPLY) \
 	  -target=digitalocean_vpc.tradan \
 	  -target=digitalocean_firewall.tradan \
 	  -target=digitalocean_droplet.base \
@@ -32,11 +43,18 @@ base-up:
 
 ## train-up: Create training droplet and attach block volume
 train-up:
-	$(TF) apply -var="train_enabled=true"
+	@echo "Your current IP: $(MY_IP_CIDR)"
+	$(TF_APPLY) -var="train_enabled=true"
 
 ## train-down: Destroy training droplet (block volume persists)
 train-down:
-	$(TF) apply -var="train_enabled=false"
+	@echo "Your current IP: $(MY_IP_CIDR)"
+	$(TF_APPLY) -var="train_enabled=false"
+
+## update-ip: Re-apply firewall with your current IP (run after IP change)
+update-ip:
+	@echo "Updating firewall to allow SSH from: $(MY_IP_CIDR)"
+	$(TF_APPLY)
 
 ## base-ssh: Open SSH session to base droplet
 base-ssh:

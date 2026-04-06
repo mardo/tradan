@@ -10,8 +10,9 @@ variable "ssh_key_fingerprint" {
 }
 
 variable "operator_ip" {
-  description = "Your IP address in CIDR notation for SSH firewall rule (e.g. 1.2.3.4/32)"
+  description = "Your IP in CIDR notation for SSH firewall rule (e.g. 1.2.3.4/32). Defaults to 0.0.0.0/0 (open to world — safe because SSH is key-only). The Makefile auto-detects and passes your current IP on every apply."
   type        = string
+  default     = "0.0.0.0/0"
 }
 
 variable "db_password" {
