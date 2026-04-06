@@ -34,9 +34,9 @@ variable "db_user" {
 }
 
 variable "region" {
-  description = "DigitalOcean region slug"
+  description = "DigitalOcean region slug. Must support CPU-optimized sizes: nyc1, sfo2, sfo3, lon1, ams3, sgp1, tor1, blr1. nyc3 does NOT support c-32/c-48."
   type        = string
-  default     = "nyc3"
+  default     = "nyc1"
 }
 
 variable "train_enabled" {
