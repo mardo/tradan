@@ -3,9 +3,9 @@ package_update: true
 package_upgrade: false
 
 packages:
-  - git
   - curl
   - parallel
+  - rsync
 
 runcmd:
   # Install uv (installs to ~/.local/bin by default)
@@ -30,8 +30,9 @@ runcmd:
       sleep 5
     done
 
-  # Clone the application repository
-  - git clone ${git_repo_url} /opt/tradan
+  # Create directory structure (code is pushed via make sync-train, not git clone)
+  - mkdir -p /opt/tradan/backend
+  - mkdir -p /opt/tradan/infra
 
   # Write .env file pointing to base droplet's PostgreSQL via private VPC IP
   - echo "DATABASE_URL=postgresql://${db_user}:${db_password}@${db_host}:5432/${db_name}" > /opt/tradan/backend/.env
@@ -39,15 +40,11 @@ runcmd:
   # Symlink trained_models -> /mnt/models
   # The trainer uses a hardcoded path: backend/trained_models
   # This symlink redirects it to the persistent block volume without any code changes.
-  - rm -rf /opt/tradan/backend/trained_models
-  - ln -s /mnt/models /opt/tradan/backend/trained_models
-
-  # Install Python dependencies
-  - cd /opt/tradan/backend && /root/.local/bin/uv sync
+  - ln -sfn /mnt/models /opt/tradan/backend/trained_models
 
   # Write worker count for run_sweep.sh to read
   - mkdir -p /etc/tradan
   - echo "${worker_count}" > /etc/tradan/worker_count
 
-  # Mark setup as complete
+  # System setup complete — code will be pushed via: make sync-train
   - touch /etc/tradan/setup_complete

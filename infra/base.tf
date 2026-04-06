@@ -11,9 +11,8 @@ resource "digitalocean_droplet" "base" {
   ssh_keys = [data.digitalocean_ssh_key.operator.id]
 
   user_data = templatefile("${path.module}/scripts/cloud-init-base.yaml", {
-    db_password  = var.db_password
-    db_name      = var.db_name
-    db_user      = var.db_user
-    git_repo_url = local.git_clone_url
+    db_password = var.db_password
+    db_name     = var.db_name
+    db_user     = var.db_user
   })
 }

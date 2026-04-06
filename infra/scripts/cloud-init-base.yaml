@@ -3,8 +3,8 @@ package_update: true
 package_upgrade: false
 
 packages:
-  - git
   - curl
+  - rsync
   - postgresql
   - postgresql-client
 
@@ -22,7 +22,7 @@ runcmd:
     PG_CONF=$(find /etc/postgresql -name "postgresql.conf" | head -1)
     sed -i "/^#*listen_addresses/c\listen_addresses = 'localhost,$PRIVATE_IP'" "$PG_CONF"
 
-  # Allow connections from VPC subnet (10.0.0.0/16) in pg_hba.conf
+  # Allow connections from VPC subnet in pg_hba.conf
   - |
     PG_HBA=$(find /etc/postgresql -name "pg_hba.conf" | head -1)
     echo "host    ${db_name}    ${db_user}    10.1.0.0/16    md5" >> "$PG_HBA"
@@ -39,17 +39,13 @@ runcmd:
   - curl -LsSf https://astral.sh/uv/install.sh | sh
   - echo 'export PATH="$HOME/.local/bin:$PATH"' >> /root/.bashrc
 
-  # Clone the application repository
-  - git clone ${git_repo_url} /opt/tradan
+  # Create directory structure (code is pushed via make sync-base, not git clone)
+  - mkdir -p /opt/tradan/backend
+  - mkdir -p /opt/tradan/infra
+  - mkdir -p /etc/tradan
 
   # Write .env file for the backend (localhost since postgres runs here)
-  # Terraform templatefile() substitutes ${db_user} etc. before cloud-init runs
-  - mkdir -p /etc/tradan
   - echo "DATABASE_URL=postgresql://${db_user}:${db_password}@localhost:5432/${db_name}" > /opt/tradan/backend/.env
 
-  # Install Python dependencies and run migrations
-  - cd /opt/tradan/backend && /root/.local/bin/uv sync
-  - cd /opt/tradan/backend && /root/.local/bin/uv run ingest migrate
-
-  # Mark setup as complete (used by Makefile wait logic)
+  # System setup complete — run: make sync-base (syncs code + runs migrations)
   - touch /etc/tradan/setup_complete
