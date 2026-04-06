@@ -25,7 +25,7 @@ runcmd:
   # Allow connections from VPC subnet (10.0.0.0/16) in pg_hba.conf
   - |
     PG_HBA=$(find /etc/postgresql -name "pg_hba.conf" | head -1)
-    echo "host    ${db_name}    ${db_user}    10.0.0.0/16    md5" >> "$PG_HBA"
+    echo "host    ${db_name}    ${db_user}    10.1.0.0/16    md5" >> "$PG_HBA"
 
   # Create DB user and database (|| true so re-runs are idempotent)
   - |

@@ -24,7 +24,7 @@ locals {
 resource "digitalocean_vpc" "tradan" {
   name     = "tradan-vpc-${var.region}"
   region   = var.region
-  ip_range = "10.0.0.0/16"
+  ip_range = "10.1.0.0/16"
 }
 
 resource "digitalocean_firewall" "tradan" {
@@ -42,7 +42,7 @@ resource "digitalocean_firewall" "tradan" {
     source_addresses = [var.operator_ip]
   }
 
-  # PostgreSQL: only from within VPC
+  # PostgreSQL: only from within VPC (dynamically references actual VPC CIDR)
   inbound_rule {
     protocol         = "tcp"
     port_range       = "5432"
