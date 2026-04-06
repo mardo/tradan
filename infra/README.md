@@ -294,3 +294,102 @@ infra/
     ├── winners.sql            # Ranked winner query with filter chain
     └── winners_no_eval.sql    # Queue of models needing evaluation
 ```
+
+---
+
+## After Phase 3: continuing toward better models
+
+After Phase 3 you have your best models. There are several directions depending on what you observe.
+
+### Path 1: Resume training existing winners
+
+SB3 supports loading a saved model and continuing training from where it left off — weights, optimizer state, and replay buffer all carry over. The current trainer always starts fresh, so this requires a small addition:
+
+```python
+# In backend/src/trainer/training/trainer.py
+def resume_training(config: ModelConfig, model_path: str, additional_timesteps: int) -> int:
+    algo_cls = ALGO_MAP[config.algorithm]
+    # ... same setup as train_model ...
+    model = algo_cls.load(model_path, env=env)   # load existing weights
+    model.learn(total_timesteps=additional_timesteps, callback=[...])
+    # ... save + record run ...
+```
+
+Then expose it as: `uv run train resume --model btc_1h_ppo_p3_s2 --run 47 --timesteps 5000000`
+
+**When to use:** A Phase 3 winner is clearly profitable but Sharpe is still improving — it just needs more data exposure. Cheaper than restarting from scratch.
+
+---
+
+### Path 2: New Phase 4 sweep — unexplored config dimensions
+
+You've covered intervals, algorithms, seeds, lookback, and learning rate. You haven't varied:
+
+| Dimension | Values to try |
+|---|---|
+| **Column sets** | All 9 vs OHLCV-only (5) vs OHLC-only (4) — does removing volume help or hurt? |
+| **SL/TP range** | `min_sl_pct`, `max_sl_pct`, `max_tp_pct` — tighter or looser action space |
+| **Trigger offset** | `max_trigger_offset_pct` — how far limit orders can be placed from price |
+| **Initial balance** | $1,000 vs $10,000 vs $100,000 — affects position sizing behavior |
+
+Take your top 3 Phase 3 winners, apply these variations, 3 seeds each. A `sweep_phase4.py` follows the same pattern as the others: query the DB for Phase 3 winners, generate variants, register configs, run `run_sweep.sh`.
+
+**When to use:** Phase 3 winners are good but you suspect the action space or reward signal is limiting them.
+
+---
+
+### Path 3: Expand to other symbols
+
+Take your best BTCUSDT config (interval + algo + lookback + lr) and apply it to other symbols without modification:
+
+```python
+SYMBOLS = ["ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
+# Use the exact ModelConfig of your Phase 3 winner, just swap symbols=[target]
+```
+
+Also test multi-symbol inputs — e.g., `symbols=["BTCUSDT", "SOLUSDT"]` to trade SOL while feeding BTC as a leading indicator.
+
+**When to use:** You have a confident BTCUSDT winner and want to diversify or find a stronger signal on alts.
+
+---
+
+### Path 4: Fix the reward signal (if most models do nothing)
+
+RL models often converge to never trading because that guarantees zero loss — technically optimal but useless. If you're still seeing many zero-trade models after Phase 3, the reward signal needs shaping.
+
+**Option A — Inactivity penalty** in `backend/src/trainer/env/trading_env.py`:
+
+```python
+# In _calculate_reward() or step():
+if self.exchange.total_trades == 0 and self.current_step > 100:
+    reward -= 0.001  # small penalty for staying idle too long
+```
+
+**Option B — Episode-end bonus** for profitable activity:
+
+```python
+if done and self.exchange.total_trades > 10:
+    reward += max(0, final_equity - self.config.initial_balance) * 0.01
+```
+
+Retrain your Phase 3 winners after this change — they may break out of the do-nothing local minimum.
+
+---
+
+### Decision tree
+
+```
+Phase 3 winners
+      │
+      ├─ Sharpe > 1.5, drawdown < 15%, still improving?
+      │    → resume training at 10M steps (Path 1)
+      │
+      ├─ Good profits but too many zero-trade models?
+      │    → reward shaping (Path 4), then retrain
+      │
+      ├─ Strong on BTC, want to diversify?
+      │    → same config on other symbols (Path 3)
+      │
+      └─ Still room to explore?
+           → vary column sets + SL/TP range in Phase 4 sweep (Path 2)
+```
