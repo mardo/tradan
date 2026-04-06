@@ -1,0 +1,47 @@
+#cloud-config
+package_update: true
+package_upgrade: false
+
+packages:
+  - git
+  - curl
+  - parallel
+
+runcmd:
+  # Install uv (installs to ~/.local/bin by default)
+  - curl -LsSf https://astral.sh/uv/install.sh | sh
+  - echo 'export PATH="$HOME/.local/bin:$PATH"' >> /root/.bashrc
+
+  # Mount block volume
+  # DigitalOcean attaches volumes as /dev/disk/by-id/scsi-0DO_Volume_<name>
+  # The volume was pre-formatted by DigitalOcean (initial_filesystem_type = "ext4")
+  # so we only need to mount it, not format it.
+  - mkdir -p /mnt/models
+  - |
+    DEVICE=$(ls /dev/disk/by-id/scsi-0DO_Volume_* 2>/dev/null | head -1)
+    if [ -n "$DEVICE" ]; then
+      mount "$DEVICE" /mnt/models
+      echo "$DEVICE /mnt/models ext4 defaults,nofail 0 2" >> /etc/fstab
+    fi
+
+  # Clone the application repository
+  - git clone ${git_repo_url} /opt/tradan
+
+  # Write .env file pointing to base droplet's PostgreSQL via private VPC IP
+  - echo "DATABASE_URL=postgresql://${db_user}:${db_password}@${db_host}:5432/${db_name}" > /opt/tradan/backend/.env
+
+  # Symlink trained_models -> /mnt/models
+  # The trainer uses a hardcoded path: backend/trained_models
+  # This symlink redirects it to the persistent block volume without any code changes.
+  - rm -rf /opt/tradan/backend/trained_models
+  - ln -s /mnt/models /opt/tradan/backend/trained_models
+
+  # Install Python dependencies
+  - cd /opt/tradan/backend && /root/.local/bin/uv sync
+
+  # Write worker count for run_sweep.sh to read
+  - mkdir -p /etc/tradan
+  - echo "${worker_count}" > /etc/tradan/worker_count
+
+  # Mark setup as complete
+  - touch /etc/tradan/setup_complete
