@@ -19,6 +19,15 @@ locals {
     "c-48" = 44
   }
   worker_count = local.worker_counts[var.train_droplet_size]
+
+  # Build authenticated HTTPS clone URL when a token is provided.
+  # If git_repo_url is already HTTPS and token is set, inject the token.
+  # If no token, use the URL as-is (must be a public HTTPS URL).
+  git_clone_url = (
+    var.github_token != "" && substr(var.git_repo_url, 0, 8) == "https://"
+    ? replace(var.git_repo_url, "https://", "https://x-access-token:${var.github_token}@")
+    : var.git_repo_url
+  )
 }
 
 resource "digitalocean_vpc" "tradan" {

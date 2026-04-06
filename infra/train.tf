@@ -12,7 +12,7 @@ resource "digitalocean_droplet" "train" {
     db_password  = var.db_password
     db_name      = var.db_name
     db_user      = var.db_user
-    git_repo_url = var.git_repo_url
+    git_repo_url = local.git_clone_url
     worker_count = local.worker_count
   })
 }

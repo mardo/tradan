@@ -57,6 +57,13 @@ variable "train_droplet_size" {
 }
 
 variable "git_repo_url" {
-  description = "Git repository URL to clone on droplets (e.g. git@github.com:org/tradan.git)"
+  description = "HTTPS git URL to clone on droplets. For private repos include a token: https://<token>@github.com/org/repo.git. SSH URLs (git@) require a deploy key and are not supported."
   type        = string
+}
+
+variable "github_token" {
+  description = "GitHub personal access token for cloning private repos. If set, git_repo_url is rewritten to https://<token>@github.com/... automatically."
+  type        = string
+  sensitive   = true
+  default     = ""
 }
