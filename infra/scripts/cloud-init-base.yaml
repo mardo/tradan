@@ -15,10 +15,12 @@ runcmd:
 
   # Detect this droplet's private IP via DigitalOcean metadata service
   # Configure PostgreSQL to listen on localhost + private IP
+  # The /c\ sed command replaces the whole matching line regardless of whether
+  # listen_addresses is commented (#) or not in the default postgresql.conf
   - |
     PRIVATE_IP=$(curl -s http://169.254.169.254/metadata/v1/interfaces/private/0/ipv4/address)
     PG_CONF=$(find /etc/postgresql -name "postgresql.conf" | head -1)
-    sed -i "s/^#listen_addresses.*/listen_addresses = 'localhost,$PRIVATE_IP'/" "$PG_CONF"
+    sed -i "/^#*listen_addresses/c\listen_addresses = 'localhost,$PRIVATE_IP'" "$PG_CONF"
 
   # Allow connections from VPC subnet (10.0.0.0/16) in pg_hba.conf
   - |
@@ -33,25 +35,21 @@ runcmd:
   # Restart PostgreSQL to apply config changes
   - systemctl restart postgresql
 
-  # Install uv (Python package manager)
+  # Install uv (Python package manager — installs to ~/.local/bin by default)
   - curl -LsSf https://astral.sh/uv/install.sh | sh
-  - echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> /root/.bashrc
+  - echo 'export PATH="$HOME/.local/bin:$PATH"' >> /root/.bashrc
 
   # Clone the application repository
   - git clone ${git_repo_url} /opt/tradan
 
   # Write .env file for the backend (localhost since postgres runs here)
-  - |
-    mkdir -p /etc/tradan
-    cat >/opt/tradan/backend/.env <<-'ENVEOF'
-    	DATABASE_URL=postgresql://${db_user}:${db_password}@localhost:5432/${db_name}
-    	ENVEOF
+  # Terraform templatefile() substitutes ${db_user} etc. before cloud-init runs
+  - mkdir -p /etc/tradan
+  - echo "DATABASE_URL=postgresql://${db_user}:${db_password}@localhost:5432/${db_name}" > /opt/tradan/backend/.env
 
-  # Install Python dependencies
-  - cd /opt/tradan/backend && /root/.cargo/bin/uv sync
-
-  # Run database migrations
-  - cd /opt/tradan/backend && /root/.cargo/bin/uv run ingest migrate
+  # Install Python dependencies and run migrations
+  - cd /opt/tradan/backend && /root/.local/bin/uv sync
+  - cd /opt/tradan/backend && /root/.local/bin/uv run ingest migrate
 
   # Mark setup as complete (used by Makefile wait logic)
   - touch /etc/tradan/setup_complete
