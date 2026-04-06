@@ -16,13 +16,19 @@ runcmd:
   # DigitalOcean attaches volumes as /dev/disk/by-id/scsi-0DO_Volume_<name>
   # The volume was pre-formatted by DigitalOcean (initial_filesystem_type = "ext4")
   # so we only need to mount it, not format it.
+  # Retry up to 30s because the volume attachment may arrive after cloud-init starts.
   - mkdir -p /mnt/models
   - |
-    DEVICE=$(ls /dev/disk/by-id/scsi-0DO_Volume_* 2>/dev/null | head -1)
-    if [ -n "$DEVICE" ]; then
-      mount "$DEVICE" /mnt/models
-      echo "$DEVICE /mnt/models ext4 defaults,nofail 0 2" >> /etc/fstab
-    fi
+    for i in $(seq 1 6); do
+      DEVICE=$(ls /dev/disk/by-id/scsi-0DO_Volume_* 2>/dev/null | head -1)
+      if [ -n "$DEVICE" ]; then
+        mount "$DEVICE" /mnt/models
+        echo "$DEVICE /mnt/models ext4 defaults,nofail 0 2" >> /etc/fstab
+        break
+      fi
+      echo "Waiting for volume device ($i/6)..."
+      sleep 5
+    done
 
   # Clone the application repository
   - git clone ${git_repo_url} /opt/tradan
