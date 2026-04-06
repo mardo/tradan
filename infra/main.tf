@@ -22,7 +22,7 @@ locals {
 }
 
 resource "digitalocean_vpc" "tradan" {
-  name     = "tradan-vpc"
+  name     = "tradan-vpc-${var.region}"
   region   = var.region
   ip_range = "10.0.0.0/16"
 }
