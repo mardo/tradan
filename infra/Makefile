@@ -14,7 +14,7 @@ SCRIPTS := $(CURDIR)/scripts
 
 # Auto-detect current public IP for the SSH firewall rule.
 # Resolved once per make invocation so all targets use a consistent IP.
-MY_IP = $(shell curl -sf https://ifconfig.me 2>/dev/null || curl -sf https://api.ipify.org 2>/dev/null || echo "0.0.0.0")
+MY_IP = $(shell curl -4sf https://ifconfig.me 2>/dev/null || curl -4sf https://api.ipify.org 2>/dev/null || echo "0.0.0.0")
 MY_IP_CIDR = $(MY_IP)/32
 
 # Shared terraform apply flags: always pass current IP + allow target overrides

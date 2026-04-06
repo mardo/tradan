@@ -4,8 +4,8 @@ variable "do_token" {
   sensitive   = true
 }
 
-variable "ssh_key_fingerprint" {
-  description = "Fingerprint of the SSH key registered in DigitalOcean"
+variable "ssh_key_name" {
+  description = "Name of the SSH key as it appears in DigitalOcean (Settings → Security → SSH Keys)"
   type        = string
 }
 

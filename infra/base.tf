@@ -1,10 +1,10 @@
 data "digitalocean_ssh_key" "operator" {
-  fingerprint = var.ssh_key_fingerprint
+  name = var.ssh_key_name
 }
 
 resource "digitalocean_droplet" "base" {
   name     = "tradan-base"
-  size     = "s-4vcpu-8gb"
+  size     = "s-2vcpu-2gb"
   image    = "ubuntu-22-04-x64"
   region   = var.region
   vpc_uuid = digitalocean_vpc.tradan.id

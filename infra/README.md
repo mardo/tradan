@@ -1,5 +1,23 @@
 # Training Infrastructure
 
+TL;DR
+```
+export TF_VAR_do_token="..."
+export TF_VAR_db_password="..."
+export TF_VAR_ssh_key_fingerprint="..."
+export TF_VAR_git_repo_url="git@github.com:yourorg/tradan.git"
+export TF_VAR_operator_ip="$(curl -s ifconfig.me)/32"
+cd infra
+make init       # terraform init (downloads DO provider)
+make base-up    # provision base droplet + volume (~$34/mo ongoing)
+make train-up   # spin up c-32 training droplet ($1/hr)
+make sweep-phase1   # register 63 configs + fire up 28 workers
+# ... wait ~5h ...
+make evaluate       # eval winners on base droplet
+make winners        # print ranked table
+make train-down 
+```
+
 DigitalOcean infrastructure for training, evaluating, and storing RL trading models. Managed with Terraform; operated with `make`.
 
 ## Architecture
@@ -48,14 +66,14 @@ Go to [DigitalOcean API settings](https://cloud.digitalocean.com/account/api/tok
 
 Go to [Settings → Security → SSH Keys](https://cloud.digitalocean.com/account/security) → Add SSH Key.
 
-After uploading, copy the **fingerprint** (e.g. `SHA256:abc123...` or `aa:bb:cc:...`).
+After uploading, note the **name** you gave it (the label shown in the list, e.g. `mardo-macbook`).
 
 ### 4. Export environment variables
 
 ```bash
 export TF_VAR_do_token="your-digitalocean-api-token"
 export TF_VAR_db_password="choose-a-strong-password"
-export TF_VAR_ssh_key_fingerprint="aa:bb:cc:dd:..."
+export TF_VAR_ssh_key_name="mardo-macbook"   # the name shown in DO Settings → SSH Keys
 export TF_VAR_git_repo_url="git@github.com:yourorg/tradan.git"
 ```
 
