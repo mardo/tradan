@@ -24,9 +24,14 @@ TF_APPLY = $(TF) apply -var="operator_ip=$(MY_IP_CIDR)"
 BASE_IP  = $(shell $(TF) output -raw base_ip 2>/dev/null || echo "")
 TRAIN_IP = $(shell $(TF) output -raw train_ip 2>/dev/null || echo "")
 
+# SSH options. Override SSH_KEY to point at a specific private key, e.g.:
+#   make train-ssh SSH_KEY=~/.ssh/id_ed25519
+SSH_KEY  ?=
+SSH_OPTS  = -o StrictHostKeyChecking=accept-new $(if $(SSH_KEY),-i $(SSH_KEY),)
+
 .PHONY: init base-up train-up train-down update-ip base-ssh train-ssh \
         sweep-phase1 sweep-phase2 sweep-phase3 \
-        winners evaluate status
+        winners evaluate progress status
 
 ## init: Initialize Terraform (run once after cloning)
 init:
@@ -59,46 +64,56 @@ update-ip:
 ## base-ssh: Open SSH session to base droplet
 base-ssh:
 	@if [ -z "$(BASE_IP)" ]; then echo "Base droplet not running. Run: make base-up"; exit 1; fi
-	ssh root@$(BASE_IP)
+	ssh $(SSH_OPTS) root@$(BASE_IP)
 
 ## train-ssh: Open SSH session to training droplet
 train-ssh:
 	@if [ -z "$(TRAIN_IP)" ]; then echo "Training droplet is not running. Run: make train-up"; exit 1; fi
-	ssh root@$(TRAIN_IP)
+	ssh $(SSH_OPTS) root@$(TRAIN_IP)
 
 ## sweep-phase1: Register Phase 1 configs and start training (63 runs)
 ## Waits for cloud-init to complete before running (up to 3 min on first boot)
 sweep-phase1:
 	@if [ -z "$(TRAIN_IP)" ]; then echo "Training droplet is not running. Run: make train-up"; exit 1; fi
 	@echo "Waiting for cloud-init to complete..."
-	ssh root@$(TRAIN_IP) "until [ -f /etc/tradan/setup_complete ]; do sleep 10; echo 'Waiting...'; done; echo 'Ready.'"
-	scp $(SCRIPTS)/sweep_phase1.py root@$(TRAIN_IP):/tmp/sweep_phase1.py
-	ssh root@$(TRAIN_IP) "cd /opt/tradan/backend && /root/.local/bin/uv run python /tmp/sweep_phase1.py"
-	ssh root@$(TRAIN_IP) "bash /opt/tradan/infra/scripts/run_sweep.sh"
+	ssh $(SSH_OPTS) root@$(TRAIN_IP) "until [ -f /etc/tradan/setup_complete ]; do sleep 10; echo 'Waiting...'; done; echo 'Ready.'"
+	scp $(SSH_OPTS) $(SCRIPTS)/sweep_phase1.py root@$(TRAIN_IP):/tmp/sweep_phase1.py
+	ssh $(SSH_OPTS) root@$(TRAIN_IP) "cd /opt/tradan/backend && /root/.local/bin/uv run python /tmp/sweep_phase1.py"
+	ssh $(SSH_OPTS) root@$(TRAIN_IP) "bash /opt/tradan/infra/scripts/run_sweep.sh"
 
 ## sweep-phase2: Register Phase 2 configs and start training (requires Phase 1 winners evaluated)
 sweep-phase2:
 	@if [ -z "$(TRAIN_IP)" ]; then echo "Training droplet is not running. Run: make train-up"; exit 1; fi
-	scp $(SCRIPTS)/sweep_phase2.py root@$(TRAIN_IP):/tmp/sweep_phase2.py
-	ssh root@$(TRAIN_IP) "cd /opt/tradan/backend && /root/.local/bin/uv run python /tmp/sweep_phase2.py"
-	ssh root@$(TRAIN_IP) "bash /opt/tradan/infra/scripts/run_sweep.sh"
+	scp $(SSH_OPTS) $(SCRIPTS)/sweep_phase2.py root@$(TRAIN_IP):/tmp/sweep_phase2.py
+	ssh $(SSH_OPTS) root@$(TRAIN_IP) "cd /opt/tradan/backend && /root/.local/bin/uv run python /tmp/sweep_phase2.py"
+	ssh $(SSH_OPTS) root@$(TRAIN_IP) "bash /opt/tradan/infra/scripts/run_sweep.sh"
 
 ## sweep-phase3: Register Phase 3 configs and start training (requires Phase 2 winners evaluated)
 sweep-phase3:
 	@if [ -z "$(TRAIN_IP)" ]; then echo "Training droplet is not running. Run: make train-up"; exit 1; fi
-	scp $(SCRIPTS)/sweep_phase3.py root@$(TRAIN_IP):/tmp/sweep_phase3.py
-	ssh root@$(TRAIN_IP) "cd /opt/tradan/backend && /root/.local/bin/uv run python /tmp/sweep_phase3.py"
-	ssh root@$(TRAIN_IP) "bash /opt/tradan/infra/scripts/run_sweep.sh"
+	scp $(SSH_OPTS) $(SCRIPTS)/sweep_phase3.py root@$(TRAIN_IP):/tmp/sweep_phase3.py
+	ssh $(SSH_OPTS) root@$(TRAIN_IP) "cd /opt/tradan/backend && /root/.local/bin/uv run python /tmp/sweep_phase3.py"
+	ssh $(SSH_OPTS) root@$(TRAIN_IP) "bash /opt/tradan/infra/scripts/run_sweep.sh"
 
 ## winners: Show ranked winner table (runs query on base droplet)
 winners:
 	@if [ -z "$(BASE_IP)" ]; then echo "Base droplet not running. Run: make base-up"; exit 1; fi
-	ssh root@$(BASE_IP) "psql \$$DATABASE_URL -f /opt/tradan/infra/scripts/winners.sql"
+	ssh $(SSH_OPTS) root@$(BASE_IP) "psql \$$DATABASE_URL -f /opt/tradan/infra/scripts/winners.sql"
 
 ## evaluate: Run holdout evaluation on top 20 unevaluated models (runs on base droplet)
 evaluate:
 	@if [ -z "$(BASE_IP)" ]; then echo "Base droplet not running. Run: make base-up"; exit 1; fi
-	ssh root@$(BASE_IP) "bash /opt/tradan/infra/scripts/evaluate_winners.sh"
+	ssh $(SSH_OPTS) root@$(BASE_IP) "bash /opt/tradan/infra/scripts/evaluate_winners.sh"
+
+## progress: Show training progress — completed/failed/pending counts + recent completions
+progress:
+	@if [ -z "$(BASE_IP)" ]; then echo "Base droplet not running."; exit 1; fi
+	ssh $(SSH_OPTS) root@$(BASE_IP) "psql \$$DATABASE_URL -c \"\
+	  SELECT status, count(*) FROM training_runs WHERE run_type='train' GROUP BY status ORDER BY status;\
+	  SELECT mc.name, tr.total_pnl, tr.sharpe_ratio, tr.total_trades, tr.completed_at \
+	  FROM training_runs tr JOIN model_configs mc ON mc.id = tr.model_config_id \
+	  WHERE tr.run_type='train' AND tr.status='completed' \
+	  ORDER BY tr.completed_at DESC LIMIT 10;\""
 
 ## status: Show current Terraform output (IPs, worker count, etc.)
 status:
