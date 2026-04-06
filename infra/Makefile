@@ -1,0 +1,87 @@
+# DigitalOcean training infrastructure
+#
+# Prerequisites — export these before running any target:
+#   export TF_VAR_do_token="..."
+#   export TF_VAR_db_password="..."
+#   export TF_VAR_ssh_key_fingerprint="..."
+#   export TF_VAR_git_repo_url="git@github.com:yourorg/tradan.git"
+#   export TF_VAR_operator_ip="$$(curl -s ifconfig.me)/32"
+
+TF      := terraform
+SCRIPTS := $(CURDIR)/scripts
+
+# Read live Terraform outputs (empty string if resource doesn't exist yet)
+BASE_IP  = $(shell $(TF) output -raw base_ip 2>/dev/null || echo "")
+TRAIN_IP = $(shell $(TF) output -raw train_ip 2>/dev/null || echo "")
+
+.PHONY: init base-up train-up train-down base-ssh train-ssh \
+        sweep-phase1 sweep-phase2 sweep-phase3 \
+        winners evaluate status
+
+## init: Initialize Terraform (run once after cloning)
+init:
+	$(TF) init
+
+## base-up: Provision base droplet + block volume (first-time setup)
+base-up:
+	$(TF) apply \
+	  -target=digitalocean_vpc.tradan \
+	  -target=digitalocean_firewall.tradan \
+	  -target=digitalocean_droplet.base \
+	  -target=digitalocean_volume.models
+
+## train-up: Create training droplet and attach block volume
+train-up:
+	$(TF) apply -var="train_enabled=true"
+
+## train-down: Destroy training droplet (block volume persists)
+train-down:
+	$(TF) apply -var="train_enabled=false"
+
+## base-ssh: Open SSH session to base droplet
+base-ssh:
+	@if [ -z "$(BASE_IP)" ]; then echo "Base droplet not running. Run: make base-up"; exit 1; fi
+	ssh root@$(BASE_IP)
+
+## train-ssh: Open SSH session to training droplet
+train-ssh:
+	@if [ -z "$(TRAIN_IP)" ]; then echo "Training droplet is not running. Run: make train-up"; exit 1; fi
+	ssh root@$(TRAIN_IP)
+
+## sweep-phase1: Register Phase 1 configs and start training (63 runs)
+## Waits for cloud-init to complete before running (up to 3 min on first boot)
+sweep-phase1:
+	@if [ -z "$(TRAIN_IP)" ]; then echo "Training droplet is not running. Run: make train-up"; exit 1; fi
+	@echo "Waiting for cloud-init to complete..."
+	ssh root@$(TRAIN_IP) "until [ -f /etc/tradan/setup_complete ]; do sleep 10; echo 'Waiting...'; done; echo 'Ready.'"
+	scp $(SCRIPTS)/sweep_phase1.py root@$(TRAIN_IP):/tmp/sweep_phase1.py
+	ssh root@$(TRAIN_IP) "cd /opt/tradan/backend && /root/.local/bin/uv run python /tmp/sweep_phase1.py"
+	ssh root@$(TRAIN_IP) "bash /opt/tradan/infra/scripts/run_sweep.sh"
+
+## sweep-phase2: Register Phase 2 configs and start training (requires Phase 1 winners evaluated)
+sweep-phase2:
+	@if [ -z "$(TRAIN_IP)" ]; then echo "Training droplet is not running. Run: make train-up"; exit 1; fi
+	scp $(SCRIPTS)/sweep_phase2.py root@$(TRAIN_IP):/tmp/sweep_phase2.py
+	ssh root@$(TRAIN_IP) "cd /opt/tradan/backend && /root/.local/bin/uv run python /tmp/sweep_phase2.py"
+	ssh root@$(TRAIN_IP) "bash /opt/tradan/infra/scripts/run_sweep.sh"
+
+## sweep-phase3: Register Phase 3 configs and start training (requires Phase 2 winners evaluated)
+sweep-phase3:
+	@if [ -z "$(TRAIN_IP)" ]; then echo "Training droplet is not running. Run: make train-up"; exit 1; fi
+	scp $(SCRIPTS)/sweep_phase3.py root@$(TRAIN_IP):/tmp/sweep_phase3.py
+	ssh root@$(TRAIN_IP) "cd /opt/tradan/backend && /root/.local/bin/uv run python /tmp/sweep_phase3.py"
+	ssh root@$(TRAIN_IP) "bash /opt/tradan/infra/scripts/run_sweep.sh"
+
+## winners: Show ranked winner table (runs query on base droplet)
+winners:
+	@if [ -z "$(BASE_IP)" ]; then echo "Base droplet not running. Run: make base-up"; exit 1; fi
+	ssh root@$(BASE_IP) "psql \$$DATABASE_URL -f /opt/tradan/infra/scripts/winners.sql"
+
+## evaluate: Run holdout evaluation on top 20 unevaluated models (runs on base droplet)
+evaluate:
+	@if [ -z "$(BASE_IP)" ]; then echo "Base droplet not running. Run: make base-up"; exit 1; fi
+	ssh root@$(BASE_IP) "bash /opt/tradan/infra/scripts/evaluate_winners.sh"
+
+## status: Show current Terraform output (IPs, worker count, etc.)
+status:
+	$(TF) output
