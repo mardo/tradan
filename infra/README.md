@@ -10,6 +10,7 @@ export TF_VAR_operator_ip="$(curl -s ifconfig.me)/32"
 cd infra
 make init       # terraform init (downloads DO provider)
 make base-up    # provision base droplet + volume (~$34/mo ongoing)
+make logs       # tail ingest logs (ingest runs in background, ~30–60min)
 make train-up   # spin up c-32 training droplet ($1/hr)
 make sweep-phase1   # register 63 configs + fire up 28 workers
 # ... wait ~5h ...
@@ -77,6 +78,16 @@ export TF_VAR_ssh_key_name="mardo-macbook"   # the name shown in DO Settings →
 export TF_VAR_git_repo_url="git@github.com:yourorg/tradan.git"
 ```
 
+To ingest data for specific symbols, set `TF_VAR_symbols` (JSON map). The default is BTCUSDT from 2020-01 — no action needed unless you want additional symbols or different dates:
+
+```bash
+# Default (already set — override only if needed)
+# TF_VAR_symbols='{"BTCUSDT":{"start":"2020-01","end":"2026-04"}}'
+
+# To add ETHUSDT as well:
+export TF_VAR_symbols='{"BTCUSDT":{"start":"2020-01","end":"2026-04"},"ETHUSDT":{"start":"2021-06","end":"2026-04"}}'
+```
+
 Add these to your shell profile (`~/.zshrc` or `~/.bashrc`) so they persist across sessions.
 
 > Your SSH firewall rule is auto-detected from your current public IP on every `make` call — no need to export `operator_ip`. If your IP changes, just run `make update-ip`.
@@ -123,6 +134,61 @@ cat /etc/tradan/setup_complete   # exists when cloud-init finished
 ```
 
 If `setup_complete` doesn't exist yet, cloud-init is still running. Wait a minute and try again.
+
+### Step 4: Monitor symbol ingest
+
+After `make base-up`, the base droplet automatically starts ingesting kline data for all configured symbols in the background. Each symbol runs as a systemd service (`tradan-ingest@BTCUSDT`).
+
+**Tail all ingest logs + error log:**
+
+```bash
+make logs
+```
+
+**Tail a specific symbol:**
+
+```bash
+make logs SYMBOL=BTCUSDT
+```
+
+**Check service status (SSH into base droplet):**
+
+```bash
+make base-ssh
+# On the droplet:
+systemctl status tradan-ingest@BTCUSDT
+```
+
+Ingest for BTCUSDT from 2020 to 2026 takes roughly 30–60 minutes depending on network conditions. Once the service exits with code 0, data is ready for training.
+
+**Re-trigger ingest for a symbol** (e.g. if a pipeline failed and you want to restart it):
+
+```bash
+make init-symbol SYMBOL=BTCUSDT
+```
+
+To add a **new symbol** to an existing base droplet (not in the original `TF_VAR_symbols` at provisioning time), SSH in and set up the env file first:
+
+```bash
+make base-ssh
+# On the droplet:
+echo -e "INGEST_START=2021-06\nINGEST_END=2026-04" > /etc/tradan/ingest-ETHUSDT.env
+```
+
+Then from your local machine:
+
+```bash
+make init-symbol SYMBOL=ETHUSDT
+```
+
+**If ingest fails after 3 retries,** the error is written to `/var/log/tradan/errors.log` on the base droplet. You'll see it in `make logs` output. To investigate and retry manually:
+
+```bash
+make base-ssh
+# On the droplet:
+cat /var/log/tradan/errors.log
+systemctl restart tradan-ingest@BTCUSDT
+```
 
 ---
 
