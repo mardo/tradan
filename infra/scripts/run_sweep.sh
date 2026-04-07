@@ -34,9 +34,10 @@ while [ "$PROCESSED" -lt "$PENDING" ]; do
   # Re-read worker count before each batch so live adjustments take effect
   WORKERS=$(cat "$WORKER_COUNT_FILE")
 
-  # Limit CPU threads per worker to avoid saturation when multiple workers run in parallel.
-  # Each worker gets an equal share of cores; minimum 1.
-  THREADS_PER_WORKER=$(( CPUS / WORKERS ))
+  # Limit CPU threads per worker to target ~80% CPU utilisation.
+  # Using 80% headroom prevents the kernel scheduler from thrashing and leaves
+  # room for the OS, DB client, and checkpoint I/O.  Minimum 1 thread.
+  THREADS_PER_WORKER=$(( (CPUS * 80 + 99) / 100 / WORKERS ))
   [ "$THREADS_PER_WORKER" -lt 1 ] && THREADS_PER_WORKER=1
   export OMP_NUM_THREADS=$THREADS_PER_WORKER
   export MKL_NUM_THREADS=$THREADS_PER_WORKER

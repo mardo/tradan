@@ -33,7 +33,7 @@ SSH_KEY  ?=
 SSH_OPTS  = -o StrictHostKeyChecking=accept-new $(if $(SSH_KEY),-i $(SSH_KEY),)
 
 .PHONY: init base-up train-up train-down update-ip base-ssh train-ssh \
-        sweep-phase1 sweep-phase2 sweep-phase3 \
+        sweep-phase1 sweep-phase1-concurrent sweep-phase2 sweep-phase3 \
         winners evaluate progress status \
         init-symbol logs tunnel
 
@@ -86,6 +86,15 @@ sweep-phase1:
 	scp $(SSH_OPTS) $(SCRIPTS)/sweep_phase1.py root@$(TRAIN_IP):/tmp/sweep_phase1.py
 	ssh $(SSH_OPTS) root@$(TRAIN_IP) "cd /opt/tradan/backend && /root/.local/bin/uv run python /tmp/sweep_phase1.py"
 	ssh $(SSH_OPTS) root@$(TRAIN_IP) "bash /opt/tradan/infra/scripts/run_sweep.sh"
+
+## sweep-phase1-concurrent: Register Phase 1 configs and train sequentially (one model at a time, full CPU per run)
+sweep-phase1-concurrent:
+	@if [ -z "$(TRAIN_IP)" ]; then echo "Training droplet is not running. Run: make train-up"; exit 1; fi
+	@echo "Waiting for cloud-init to complete..."
+	ssh $(SSH_OPTS) root@$(TRAIN_IP) "until [ -f /etc/tradan/setup_complete ]; do sleep 10; echo 'Waiting...'; done; echo 'Ready.'"
+	scp $(SSH_OPTS) $(SCRIPTS)/sweep_phase1.py root@$(TRAIN_IP):/tmp/sweep_phase1.py
+	ssh $(SSH_OPTS) root@$(TRAIN_IP) "cd /opt/tradan/backend && /root/.local/bin/uv run python /tmp/sweep_phase1.py"
+	ssh $(SSH_OPTS) root@$(TRAIN_IP) "bash /opt/tradan/infra/scripts/run_sweep_sequential.sh"
 
 ## sweep-phase2: Register Phase 2 configs and start training (requires Phase 1 winners evaluated)
 sweep-phase2:
