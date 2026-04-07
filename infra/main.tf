@@ -14,9 +14,9 @@ provider "digitalocean" {
 
 locals {
   worker_counts = {
-    "c-16" = 14
-    "c-32" = 28
-    "c-48" = 44
+    "c-16" = 6
+    "c-32" = 10
+    "c-48" = 14
   }
   worker_count = local.worker_counts[var.train_droplet_size]
 
