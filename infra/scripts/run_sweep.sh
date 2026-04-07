@@ -3,6 +3,15 @@ set -euo pipefail
 
 BACKEND=/opt/tradan/backend
 WORKER_COUNT_FILE=/etc/tradan/worker_count
+LOCKFILE=/tmp/run_sweep.lock
+
+# Prevent concurrent sweep runs — only one sweep at a time.
+exec 9>"$LOCKFILE"
+if ! flock -n 9; then
+  echo "ERROR: Another sweep is already running (lock held: $LOCKFILE). Aborting."
+  echo "       Kill the existing sweep first, then re-run."
+  exit 1
+fi
 
 cd "$BACKEND"
 
