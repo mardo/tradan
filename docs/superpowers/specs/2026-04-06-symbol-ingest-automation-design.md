@@ -159,6 +159,7 @@ logs:
 | `infra/scripts/init-symbol.sh` | New — full ingest pipeline script |
 | `infra/Makefile` | Add `init-symbol` and `logs` targets, update `.PHONY` |
 | `infra/.env.example` | Document BTCUSDT as example in `TF_VAR_symbols` |
+| `infra/README.md` | Document `make logs`, `make init-symbol`, and the `symbols` variable |
 
 ---
 
