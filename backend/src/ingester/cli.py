@@ -20,6 +20,7 @@ import argparse
 import datetime as dt
 import multiprocessing
 import os
+import sys
 from datetime import datetime, timezone
 from typing import Iterable
 
@@ -277,6 +278,7 @@ def cmd_verify(args: argparse.Namespace) -> None:
         print()
         if total_gaps:
             print(f"Result: {total_gaps} gap(s) found across {total_checked} checked series.")
+            sys.exit(1)
         else:
             print(f"Result: all {total_checked} checked series are contiguous.")
     finally:
