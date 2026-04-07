@@ -48,12 +48,24 @@ variable "train_enabled" {
 variable "train_droplet_size" {
   description = "CPU-optimized droplet size: c-16 (14 workers), c-32 (28 workers), c-48 (44 workers)"
   type        = string
-  default     = "c-32"
+  default     = "c-16"
 
   validation {
     condition     = contains(["c-16", "c-32", "c-48"], var.train_droplet_size)
     error_message = "train_droplet_size must be c-16, c-32, or c-48."
   }
+}
+
+variable "git_repo_url" {
+  description = "HTTPS git URL to clone on droplets. For private repos include a token: https://<token>@github.com/org/repo.git. SSH URLs (git@) require a deploy key and are not supported."
+  type        = string
+}
+
+variable "github_token" {
+  description = "GitHub personal access token for cloning private repos. If set, git_repo_url is rewritten to https://<token>@github.com/... automatically."
+  type        = string
+  sensitive   = true
+  default     = ""
 }
 
 variable "symbols" {

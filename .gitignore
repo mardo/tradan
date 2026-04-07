@@ -32,3 +32,8 @@ logs/
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Terraform state & backups
+*.tfstate
+*.tfstate.*
+*.backup

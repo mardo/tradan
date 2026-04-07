@@ -5,3 +5,11 @@ resource "digitalocean_volume" "models" {
   initial_filesystem_type = "ext4"
   description             = "Persistent storage for trained model .zip files"
 }
+
+resource "digitalocean_volume" "pgdata" {
+  name                    = "tradan-pgdata"
+  region                  = var.region
+  size                    = 20
+  initial_filesystem_type = "ext4"
+  description             = "Persistent PostgreSQL data directory for base droplet"
+}
