@@ -15,7 +15,8 @@ fi
 
 cd "$BACKEND"
 
-echo "Starting sweep (batched mode — worker count read from $WORKER_COUNT_FILE each batch)..."
+CPUS=$(nproc)
+echo "Starting sweep (batched mode — worker count read from $WORKER_COUNT_FILE each batch, CPUs: $CPUS)..."
 
 /root/.local/bin/uv run train list --names-only --status pending > /tmp/pending_models.txt
 PENDING=$(wc -l < /tmp/pending_models.txt | tr -d ' ')
@@ -32,6 +33,13 @@ BATCH_NUM=0
 while [ "$PROCESSED" -lt "$PENDING" ]; do
   # Re-read worker count before each batch so live adjustments take effect
   WORKERS=$(cat "$WORKER_COUNT_FILE")
+
+  # Limit CPU threads per worker to avoid saturation when multiple workers run in parallel.
+  # Each worker gets an equal share of cores; minimum 1.
+  THREADS_PER_WORKER=$(( CPUS / WORKERS ))
+  [ "$THREADS_PER_WORKER" -lt 1 ] && THREADS_PER_WORKER=1
+  export OMP_NUM_THREADS=$THREADS_PER_WORKER
+  export MKL_NUM_THREADS=$THREADS_PER_WORKER
 
   # Slice the next batch of model names from the pending list
   mapfile -t BATCH < <(tail -n +"$((PROCESSED + 1))" /tmp/pending_models.txt | head -n "$WORKERS")

@@ -48,7 +48,7 @@ variable "train_enabled" {
 variable "train_droplet_size" {
   description = "CPU-optimized droplet size: c-16 (14 workers), c-32 (28 workers), c-48 (44 workers)"
   type        = string
-  default     = "c-32"
+  default     = "c-16"
 
   validation {
     condition     = contains(["c-16", "c-32", "c-48"], var.train_droplet_size)

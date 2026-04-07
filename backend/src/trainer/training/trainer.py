@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import torch
 from stable_baselines3 import A2C, PPO, SAC
 from stable_baselines3.common.callbacks import (
     BaseCallback,
@@ -114,6 +115,12 @@ def train_model(
     algo_override: str | None = None,
     timesteps_override: int | None = None,
 ) -> int:
+    # Cap PyTorch's intraop thread pool so parallel workers don't saturate all cores.
+    # OMP_NUM_THREADS is set by run_sweep.sh to (nproc / worker_count).
+    _cpu_threads = int(os.environ.get("OMP_NUM_THREADS", os.cpu_count() or 1))
+    torch.set_num_threads(_cpu_threads)
+    torch.set_num_interop_threads(1)
+
     algorithm = algo_override or config.algorithm
     total_timesteps = timesteps_override or config.total_timesteps
 
