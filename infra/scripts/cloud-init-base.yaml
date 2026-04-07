@@ -5,38 +5,79 @@ package_upgrade: false
 packages:
   - git
   - curl
+  - rsync
   - postgresql
   - postgresql-client
 
 runcmd:
   - set -e  # abort on first error so setup_complete is only written on full success
-  # Start and enable PostgreSQL
-  - systemctl start postgresql
-  - systemctl enable postgresql
 
-  # Detect this droplet's private IP via DigitalOcean metadata service
-  # Configure PostgreSQL to listen on localhost + private IP
-  # The /c\ sed command replaces the whole matching line regardless of whether
-  # listen_addresses is commented (#) or not in the default postgresql.conf
+  # PostgreSQL is auto-started by the package install with default data in
+  # /var/lib/postgresql. Stop it before we move the data dir.
+  - systemctl stop postgresql
+
+  # Wait up to 30s for the pgdata volume device to appear (attachment may
+  # arrive slightly after cloud-init starts).
+  - |
+    for i in $(seq 1 6); do
+      DEVICE=$(ls /dev/disk/by-id/scsi-0DO_Volume_${pgdata_volume_name} 2>/dev/null | head -1)
+      if [ -n "$DEVICE" ]; then
+        break
+      fi
+      echo "Waiting for pgdata volume ($i/6)..."
+      sleep 5
+    done
+    if [ -z "$DEVICE" ]; then
+      echo "ERROR: pgdata volume device not found after 30s"
+      exit 1
+    fi
+
+  # Mount the volume and persist in fstab
+  - |
+    DEVICE=$(ls /dev/disk/by-id/scsi-0DO_Volume_${pgdata_volume_name})
+    mkdir -p /mnt/pgdata
+    mount "$DEVICE" /mnt/pgdata
+    echo "$DEVICE /mnt/pgdata ext4 defaults,nofail 0 2" >> /etc/fstab
+
+  # Move the initialized cluster from local disk to the volume.
+  # Ubuntu keeps config in /etc/postgresql/VERSION/main/ and data in
+  # /var/lib/postgresql/VERSION/main/ - we only move the data directory.
+  - |
+    PG_VER=$(ls /etc/postgresql/ | head -1)
+    mkdir -p /mnt/pgdata/$PG_VER/main
+    rsync -a /var/lib/postgresql/$PG_VER/main/ /mnt/pgdata/$PG_VER/main/
+    chown -R postgres:postgres /mnt/pgdata
+
+  # Point postgresql.conf at the new data directory on the volume
+  - |
+    PG_VER=$(ls /etc/postgresql/ | head -1)
+    PG_CONF=$(find /etc/postgresql -name "postgresql.conf" | head -1)
+    sed -i "/^#*data_directory/c\data_directory = '/mnt/pgdata/$PG_VER/main'" "$PG_CONF"
+
+  # Configure PostgreSQL to listen on localhost + private VPC IP
   - |
     PRIVATE_IP=$(curl -s http://169.254.169.254/metadata/v1/interfaces/private/0/ipv4/address)
     PG_CONF=$(find /etc/postgresql -name "postgresql.conf" | head -1)
     sed -i "/^#*listen_addresses/c\listen_addresses = 'localhost,$PRIVATE_IP'" "$PG_CONF"
 
-  # Allow connections from VPC subnet (10.0.0.0/16) in pg_hba.conf
+  # Allow connections from VPC private range (vpc_cidr matches digitalocean_vpc.tradan.ip_range)
   - |
     PG_HBA=$(find /etc/postgresql -name "pg_hba.conf" | head -1)
-    echo "host    ${db_name}    ${db_user}    10.1.0.0/16    md5" >> "$PG_HBA"
+    echo "host    ${db_name}    ${db_user}    ${vpc_cidr}    scram-sha-256" >> "$PG_HBA"
+
+  # Start PostgreSQL with the volume-backed data directory and enable on boot
+  - systemctl start postgresql
+  - systemctl enable postgresql
 
   # Create DB user and database (|| true so re-runs are idempotent)
   - |
     sudo -u postgres psql -c "CREATE USER ${db_user} WITH PASSWORD '${db_password}';" || true
     sudo -u postgres psql -c "CREATE DATABASE ${db_name} OWNER ${db_user};" || true
 
-  # Restart PostgreSQL to apply config changes
+  # Restart to apply all config changes
   - systemctl restart postgresql
 
-  # Install uv (Python package manager — installs to ~/.local/bin by default)
+  # Install uv (Python package manager - installs to ~/.local/bin by default)
   - curl -LsSf https://astral.sh/uv/install.sh | sh
   - echo 'export PATH="$HOME/.local/bin:$PATH"' >> /root/.bashrc
 
@@ -54,3 +95,39 @@ runcmd:
 
   # Mark setup as complete (used by Makefile wait logic)
   - touch /etc/tradan/setup_complete
+
+  # Create log directory for ingest services
+  - mkdir -p /var/log/tradan
+
+  # Write systemd template unit for per-symbol ingest
+  - |
+    cat > /etc/systemd/system/tradan-ingest@.service << 'UNIT'
+    [Unit]
+    Description=Tradan kline ingest for %i
+    After=network-online.target postgresql.service
+    Wants=network-online.target
+
+    [Service]
+    Type=oneshot
+    RemainAfterExit=yes
+    TimeoutStartSec=0
+    EnvironmentFile=/etc/tradan/ingest-%i.env
+    WorkingDirectory=/opt/tradan/backend
+    ExecStart=/opt/tradan/infra/scripts/init-symbol.sh %i
+    StandardOutput=append:/var/log/tradan/ingest-%i.log
+    StandardError=append:/var/log/tradan/ingest-%i.log
+
+    [Install]
+    WantedBy=multi-user.target
+    UNIT
+    systemctl daemon-reload
+
+  # Make init-symbol.sh executable (git may not preserve +x)
+  - chmod +x /opt/tradan/infra/scripts/init-symbol.sh
+
+  # Write per-symbol env files and start ingest services
+%{ for symbol, cfg in symbols ~}
+  - printf 'INGEST_START=%s\nINGEST_END=%s\n' '${cfg.start}' '${cfg.end}' > /etc/tradan/ingest-${symbol}.env
+  - systemctl enable tradan-ingest@${symbol}
+  - systemctl start --no-block tradan-ingest@${symbol}
+%{ endfor ~}

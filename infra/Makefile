@@ -1,17 +1,19 @@
 # DigitalOcean training infrastructure
 #
-# Prerequisites — export these before running any target:
-#   export TF_VAR_do_token="..."
-#   export TF_VAR_db_password="..."
-#   export TF_VAR_ssh_key_name="your-do-ssh-key-name"
+# Variables are loaded automatically from .env if it exists.
+# Copy .env.example to .env and fill in your values before running any target.
 #
 # operator_ip is auto-detected from your current public IP on every apply.
-# No need to export it — the Makefile handles it automatically.
-# Code is deployed via rsync (make sync-train / make sync-base) — no git credentials needed.
+# No need to set it — the Makefile handles it automatically.
 
-TF       := terraform
-SCRIPTS  := $(CURDIR)/scripts
-REPO_ROOT := $(abspath $(CURDIR)/..)
+# Auto-load .env so TF_VAR_* are always in sync with the file.
+# Strips surrounding double-quotes so make and bash source both work.
+ifneq (,$(wildcard .env))
+  $(foreach kv,$(shell grep -v '^\#' .env | grep -v '^$$' | sed 's/"//g'),$(eval export $(kv)))
+endif
+
+TF      := terraform
+SCRIPTS := $(CURDIR)/scripts
 
 # Auto-detect current public IP for the SSH firewall rule.
 # Resolved once per make invocation so all targets use a consistent IP.
@@ -31,7 +33,6 @@ SSH_KEY  ?=
 SSH_OPTS  = -o StrictHostKeyChecking=accept-new $(if $(SSH_KEY),-i $(SSH_KEY),)
 
 .PHONY: init base-up train-up train-down update-ip base-ssh train-ssh \
-        sync-train sync-base \
         sweep-phase1 sweep-phase2 sweep-phase3 \
         winners evaluate progress status
 
@@ -45,8 +46,10 @@ base-up:
 	$(TF_APPLY) \
 	  -target=digitalocean_vpc.tradan \
 	  -target=digitalocean_firewall.tradan \
+	  -target=digitalocean_volume.pgdata \
+	  -target=digitalocean_volume.models \
 	  -target=digitalocean_droplet.base \
-	  -target=digitalocean_volume.models
+	  -target=digitalocean_volume_attachment.pgdata
 
 ## train-up: Create training droplet and attach block volume
 train-up:
@@ -73,61 +76,28 @@ train-ssh:
 	@if [ -z "$(TRAIN_IP)" ]; then echo "Training droplet is not running. Run: make train-up"; exit 1; fi
 	ssh $(SSH_OPTS) root@$(TRAIN_IP)
 
-## sync-train: Rsync backend/ + infra/ to training droplet, then install Python deps
-sync-train:
+## sweep-phase1: Register Phase 1 configs and start training (63 runs)
+## Waits for cloud-init to complete before running (up to 3 min on first boot)
+sweep-phase1:
 	@if [ -z "$(TRAIN_IP)" ]; then echo "Training droplet is not running. Run: make train-up"; exit 1; fi
 	@echo "Waiting for cloud-init to complete..."
 	ssh $(SSH_OPTS) root@$(TRAIN_IP) "until [ -f /etc/tradan/setup_complete ]; do sleep 10; echo 'Waiting...'; done; echo 'Ready.'"
-	@echo "Syncing backend/ and infra/ to training droplet..."
-	rsync -az --delete \
-	  --exclude '__pycache__' --exclude '*.pyc' --exclude '.venv' \
-	  --exclude 'trained_models' --exclude '.git' \
-	  -e "ssh $(SSH_OPTS)" \
-	  $(REPO_ROOT)/backend/ root@$(TRAIN_IP):/opt/tradan/backend/
-	rsync -az --delete \
-	  --exclude '.terraform' --exclude 'terraform.tfstate*' --exclude '.env' \
-	  -e "ssh $(SSH_OPTS)" \
-	  $(REPO_ROOT)/infra/ root@$(TRAIN_IP):/opt/tradan/infra/
-	ssh $(SSH_OPTS) root@$(TRAIN_IP) "cd /opt/tradan/backend && /root/.local/bin/uv sync"
-	@echo "Training droplet is ready."
-
-## sync-base: Rsync backend/ + infra/ to base droplet, install deps, run migrations
-sync-base:
-	@if [ -z "$(BASE_IP)" ]; then echo "Base droplet not running. Run: make base-up"; exit 1; fi
-	@echo "Waiting for cloud-init to complete..."
-	ssh $(SSH_OPTS) root@$(BASE_IP) "until [ -f /etc/tradan/setup_complete ]; do sleep 10; echo 'Waiting...'; done; echo 'Ready.'"
-	@echo "Syncing backend/ and infra/ to base droplet..."
-	rsync -az --delete \
-	  --exclude '__pycache__' --exclude '*.pyc' --exclude '.venv' \
-	  --exclude 'trained_models' --exclude '.git' \
-	  -e "ssh $(SSH_OPTS)" \
-	  $(REPO_ROOT)/backend/ root@$(BASE_IP):/opt/tradan/backend/
-	rsync -az --delete \
-	  --exclude '.terraform' --exclude 'terraform.tfstate*' --exclude '.env' \
-	  -e "ssh $(SSH_OPTS)" \
-	  $(REPO_ROOT)/infra/ root@$(BASE_IP):/opt/tradan/infra/
-	ssh $(SSH_OPTS) root@$(BASE_IP) "cd /opt/tradan/backend && /root/.local/bin/uv sync && /root/.local/bin/uv run ingest migrate"
-	@echo "Base droplet is ready."
-
-## sweep-phase1: Sync code, register Phase 1 configs, start training (63 runs)
-sweep-phase1:
-	@if [ -z "$(TRAIN_IP)" ]; then echo "Training droplet is not running. Run: make train-up"; exit 1; fi
-	$(MAKE) sync-train
-	ssh $(SSH_OPTS) root@$(TRAIN_IP) "cd /opt/tradan/backend && /root/.local/bin/uv run python /opt/tradan/infra/scripts/sweep_phase1.py"
+	scp $(SSH_OPTS) $(SCRIPTS)/sweep_phase1.py root@$(TRAIN_IP):/tmp/sweep_phase1.py
+	ssh $(SSH_OPTS) root@$(TRAIN_IP) "cd /opt/tradan/backend && /root/.local/bin/uv run python /tmp/sweep_phase1.py"
 	ssh $(SSH_OPTS) root@$(TRAIN_IP) "bash /opt/tradan/infra/scripts/run_sweep.sh"
 
-## sweep-phase2: Sync code, register Phase 2 configs (requires Phase 1 winners evaluated)
+## sweep-phase2: Register Phase 2 configs and start training (requires Phase 1 winners evaluated)
 sweep-phase2:
 	@if [ -z "$(TRAIN_IP)" ]; then echo "Training droplet is not running. Run: make train-up"; exit 1; fi
-	$(MAKE) sync-train
-	ssh $(SSH_OPTS) root@$(TRAIN_IP) "cd /opt/tradan/backend && /root/.local/bin/uv run python /opt/tradan/infra/scripts/sweep_phase2.py"
+	scp $(SSH_OPTS) $(SCRIPTS)/sweep_phase2.py root@$(TRAIN_IP):/tmp/sweep_phase2.py
+	ssh $(SSH_OPTS) root@$(TRAIN_IP) "cd /opt/tradan/backend && /root/.local/bin/uv run python /tmp/sweep_phase2.py"
 	ssh $(SSH_OPTS) root@$(TRAIN_IP) "bash /opt/tradan/infra/scripts/run_sweep.sh"
 
-## sweep-phase3: Sync code, register Phase 3 configs (requires Phase 2 winners evaluated)
+## sweep-phase3: Register Phase 3 configs and start training (requires Phase 2 winners evaluated)
 sweep-phase3:
 	@if [ -z "$(TRAIN_IP)" ]; then echo "Training droplet is not running. Run: make train-up"; exit 1; fi
-	$(MAKE) sync-train
-	ssh $(SSH_OPTS) root@$(TRAIN_IP) "cd /opt/tradan/backend && /root/.local/bin/uv run python /opt/tradan/infra/scripts/sweep_phase3.py"
+	scp $(SSH_OPTS) $(SCRIPTS)/sweep_phase3.py root@$(TRAIN_IP):/tmp/sweep_phase3.py
+	ssh $(SSH_OPTS) root@$(TRAIN_IP) "cd /opt/tradan/backend && /root/.local/bin/uv run python /tmp/sweep_phase3.py"
 	ssh $(SSH_OPTS) root@$(TRAIN_IP) "bash /opt/tradan/infra/scripts/run_sweep.sh"
 
 ## winners: Show ranked winner table (runs query on base droplet)
