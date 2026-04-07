@@ -124,7 +124,7 @@ runcmd:
 
   # Write per-symbol env files and start ingest services
 %{ for symbol, cfg in symbols ~}
-  - printf 'INGEST_START=%s\nINGEST_END=%s\n' '${cfg.start}' '${cfg.end}' > /etc/tradan/ingest-${symbol}.env
+  - printf 'INGEST_START=%s\nINGEST_END=%s\nINGEST_RETRY_ENABLED=%s\n' '${cfg.start}' '${cfg.end}' '${ingest_retry_enabled}' > /etc/tradan/ingest-${symbol}.env
   - systemctl enable tradan-ingest@${symbol}
   - systemctl start --no-block tradan-ingest@${symbol}
 %{ endfor ~}

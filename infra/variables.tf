@@ -78,3 +78,9 @@ variable "symbols" {
     BTCUSDT = { start = "2020-01", end = "2026-04" }
   }
 }
+
+variable "ingest_retry_enabled" {
+  description = "Whether init-symbol.sh should run the fill-gaps/retry loop after the initial ingest run. Set to true to automatically repair gaps; false to skip retries and just run enqueue+run+verify."
+  type        = bool
+  default     = false
+}

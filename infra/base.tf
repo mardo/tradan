@@ -17,7 +17,8 @@ resource "digitalocean_droplet" "base" {
     git_repo_url       = local.git_clone_url
     vpc_cidr           = digitalocean_vpc.tradan.ip_range
     pgdata_volume_name = digitalocean_volume.pgdata.name
-    symbols            = var.symbols
+    symbols              = var.symbols
+    ingest_retry_enabled = var.ingest_retry_enabled
   })
 }
 

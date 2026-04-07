@@ -54,28 +54,38 @@ $UV run ingest enqueue --symbol "$SYMBOL" --start "$INGEST_START" --end "$INGEST
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Running ingest workers (10)..."
 $UV run ingest run --workers 10
 
-# Step 3: Verify + retry loop (up to 3 attempts)
-MAX_RETRIES=3
-for attempt in $(seq 1 $MAX_RETRIES); do
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Verify attempt $attempt/$MAX_RETRIES..."
+# Step 3: Verify (+ optional retry loop)
+if [ "${INGEST_RETRY_ENABLED:-false}" = "true" ]; then
+  MAX_RETRIES=3
+  for attempt in $(seq 1 $MAX_RETRIES); do
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Verify attempt $attempt/$MAX_RETRIES..."
+    if $UV run ingest verify --symbol "$SYMBOL"; then
+      echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $SYMBOL: all data contiguous. Done."
+      exit 0
+    fi
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Gaps found. Running fill-gaps + retry (attempt $attempt)..."
+    $UV run ingest fill-gaps --symbol "$SYMBOL"
+    $UV run ingest retry --workers 4
+  done
+
+  # Final verify after all retries
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Final verify after $MAX_RETRIES retries..."
+  if $UV run ingest verify --symbol "$SYMBOL"; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $SYMBOL: all data contiguous after retries. Done."
+    exit 0
+  fi
+
+  # Permanent failure
+  MSG="[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERROR: $SYMBOL still has gaps after $MAX_RETRIES retries. Manual intervention required."
+  echo "$MSG"
+  echo "$MSG" >> "$ERR_LOG"
+  exit 1
+else
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Retry disabled. Running single verify pass..."
   if $UV run ingest verify --symbol "$SYMBOL"; then
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $SYMBOL: all data contiguous. Done."
     exit 0
   fi
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Gaps found. Running fill-gaps + retry (attempt $attempt)..."
-  $UV run ingest fill-gaps --symbol "$SYMBOL"
-  $UV run ingest retry --workers 4
-done
-
-# Step 4: Final verify after all retries
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Final verify after $MAX_RETRIES retries..."
-if $UV run ingest verify --symbol "$SYMBOL"; then
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $SYMBOL: all data contiguous after retries. Done."
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WARNING: $SYMBOL has gaps. Retry disabled — run 'make init-symbol SYMBOL=$SYMBOL' after enabling retries."
   exit 0
 fi
-
-# Permanent failure
-MSG="[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERROR: $SYMBOL still has gaps after $MAX_RETRIES retries. Manual intervention required."
-echo "$MSG"
-echo "$MSG" >> "$ERR_LOG"
-exit 1

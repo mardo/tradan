@@ -35,7 +35,7 @@ SSH_OPTS  = -o StrictHostKeyChecking=accept-new $(if $(SSH_KEY),-i $(SSH_KEY),)
 .PHONY: init base-up train-up train-down update-ip base-ssh train-ssh \
         sweep-phase1 sweep-phase2 sweep-phase3 \
         winners evaluate progress status \
-        init-symbol logs
+        init-symbol logs tunnel
 
 ## init: Initialize Terraform (run once after cloning)
 init:
@@ -150,3 +150,13 @@ logs:
 			ssh $(SSH_OPTS) root@$(BASE_IP) "tail -f /var/log/tradan/ingest-*.log /var/log/tradan/errors.log 2>/dev/null"; \
 		fi; \
 	fi
+
+## tunnel: Open SSH tunnel to base droplet's PostgreSQL on localhost:5432
+## Run in a separate terminal, then use DATABASE_URL pointing at localhost
+## Usage: make tunnel
+tunnel:
+	@if [ -z "$(BASE_IP)" ]; then echo "Base droplet not running. Run: make base-up"; exit 1; fi
+	@echo "PostgreSQL tunnel open: postgresql://$(TF_VAR_db_user):***@localhost:5432/$(TF_VAR_db_name)"
+	@echo "DATABASE_URL=postgresql://$(TF_VAR_db_user):$(TF_VAR_db_password)@localhost:5432/$(TF_VAR_db_name)"
+	@echo "Press Ctrl+C to close."
+	ssh $(SSH_OPTS) -N -L 5432:localhost:5432 root@$(BASE_IP)
