@@ -34,7 +34,8 @@ SSH_OPTS  = -o StrictHostKeyChecking=accept-new $(if $(SSH_KEY),-i $(SSH_KEY),)
 
 .PHONY: init base-up train-up train-down update-ip base-ssh train-ssh \
         sweep-phase1 sweep-phase2 sweep-phase3 \
-        winners evaluate progress status
+        winners evaluate progress status \
+        init-symbol logs
 
 ## init: Initialize Terraform (run once after cloning)
 init:
@@ -123,3 +124,29 @@ progress:
 ## status: Show current Terraform output (IPs, worker count, etc.)
 status:
 	$(TF) output
+
+TARGET ?= base
+
+## init-symbol: Re-trigger ingest for a symbol on the base droplet (idempotent)
+## Usage: make init-symbol SYMBOL=BTCUSDT
+init-symbol:
+	@if [ -z "$(BASE_IP)" ]; then echo "Base droplet not running. Run: make base-up"; exit 1; fi
+	@if [ -z "$(SYMBOL)" ]; then echo "Usage: make init-symbol SYMBOL=BTCUSDT"; exit 1; fi
+	ssh $(SSH_OPTS) root@$(BASE_IP) "systemctl restart tradan-ingest@$(SYMBOL)"
+
+## logs: Tail logs on base or train droplet
+## Usage: make logs                       (all base ingest logs + errors)
+##        make logs SYMBOL=BTCUSDT        (single symbol on base)
+##        make logs TARGET=train          (train droplet journal)
+logs:
+	@if [ "$(TARGET)" = "train" ]; then \
+		if [ -z "$(TRAIN_IP)" ]; then echo "Training droplet not running. Run: make train-up"; exit 1; fi; \
+		ssh $(SSH_OPTS) root@$(TRAIN_IP) "tail -f /var/log/tradan/train.log 2>/dev/null || journalctl -f"; \
+	else \
+		if [ -z "$(BASE_IP)" ]; then echo "Base droplet not running. Run: make base-up"; exit 1; fi; \
+		if [ -n "$(SYMBOL)" ]; then \
+			ssh $(SSH_OPTS) root@$(BASE_IP) "tail -f /var/log/tradan/ingest-$(SYMBOL).log"; \
+		else \
+			ssh $(SSH_OPTS) root@$(BASE_IP) "tail -f /var/log/tradan/ingest-*.log /var/log/tradan/errors.log 2>/dev/null"; \
+		fi; \
+	fi
