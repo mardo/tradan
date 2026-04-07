@@ -56,3 +56,13 @@ variable "train_droplet_size" {
   }
 }
 
+variable "symbols" {
+  description = "Symbols to ingest, keyed by symbol name. Each entry specifies the start and end month (YYYY-MM) for kline data."
+  type = map(object({
+    start = string
+    end   = string
+  }))
+  default = {
+    BTCUSDT = { start = "2020-01", end = "2026-04" }
+  }
+}
