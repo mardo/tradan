@@ -93,9 +93,6 @@ runcmd:
   - cd /opt/tradan/backend && /root/.local/bin/uv sync
   - cd /opt/tradan/backend && /root/.local/bin/uv run ingest migrate
 
-  # Mark setup as complete (used by Makefile wait logic)
-  - touch /etc/tradan/setup_complete
-
   # Create log directory for ingest services
   - mkdir -p /var/log/tradan
 
@@ -131,3 +128,7 @@ runcmd:
   - systemctl enable tradan-ingest@${symbol}
   - systemctl start --no-block tradan-ingest@${symbol}
 %{ endfor ~}
+
+  # Mark setup as complete (used by Makefile wait logic)
+  # Written last so it confirms ingest services have been started
+  - touch /etc/tradan/setup_complete

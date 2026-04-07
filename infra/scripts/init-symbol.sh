@@ -15,6 +15,10 @@ ERR_LOG="$LOG_DIR/errors.log"
 ENV_FILE="/etc/tradan/ingest-${SYMBOL}.env"
 BACKEND_DIR="/opt/tradan/backend"
 UV="/root/.local/bin/uv"
+
+# Trap unexpected exits (e.g. fill-gaps or retry failing) to always log to errors.log
+trap 'echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERROR: $SYMBOL pipeline failed unexpectedly (see above). Manual intervention required." >> "$ERR_LOG"' ERR
+
 if [ ! -x "$UV" ]; then
   echo "ERROR: uv not found at $UV" >&2
   exit 1
