@@ -159,4 +159,4 @@ tunnel:
 	@echo "PostgreSQL tunnel open: postgresql://$(TF_VAR_db_user):***@localhost:5432/$(TF_VAR_db_name)"
 	@echo "DATABASE_URL=postgresql://$(TF_VAR_db_user):$(TF_VAR_db_password)@localhost:5432/$(TF_VAR_db_name)"
 	@echo "Press Ctrl+C to close."
-	ssh $(SSH_OPTS) -N -L 5432:localhost:5432 root@$(BASE_IP)
+	ssh $(SSH_OPTS) -N -L 5433:localhost:5432 root@$(BASE_IP)

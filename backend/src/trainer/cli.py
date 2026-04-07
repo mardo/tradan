@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
-from trainer.config import ModelConfig
+from ingester.db import connect
 from trainer.db import (
     get_training_run,
     list_model_configs,
@@ -96,6 +97,59 @@ def cmd_list(args: argparse.Namespace) -> None:
         print(f"{m['name']:<20} {m['run_count']:>6} {pnl:>12} {created}")
 
 
+def _repo_root() -> Path:
+    # backend/src/trainer/cli.py -> tradan/
+    return Path(__file__).resolve().parents[3]
+
+
+def _load_sql_query(relative_under_infra: str) -> str:
+    path = _repo_root() / "infra" / "scripts" / relative_under_infra
+    if not path.is_file():
+        raise FileNotFoundError(f"SQL file not found: {path}")
+    lines: list[str] = []
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("--"):
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip().rstrip(";")
+
+
+def _print_query_result(sql: str) -> None:
+    conn = connect()
+    try:
+        cur = conn.execute(sql)
+        rows = cur.fetchall()
+        cols = [d.name for d in (cur.description or [])]
+        if not cols:
+            print("(no columns)")
+            return
+        if not rows:
+            print("(no rows)")
+            return
+        widths = [len(c) for c in cols]
+        for row in rows:
+            for i, cell in enumerate(row):
+                widths[i] = max(widths[i], len(str(cell) if cell is not None else ""))
+        fmt = "  ".join(f"{{:{w}}}" for w in widths)
+        print(fmt.format(*cols))
+        print("  ".join("-" * w for w in widths))
+        for row in rows:
+            print(fmt.format(*(str(c) if c is not None else "" for c in row)))
+    finally:
+        conn.close()
+
+
+def cmd_winners(_args: argparse.Namespace) -> None:
+    """Ranked configs passing eval filters (infra/scripts/winners.sql)."""
+    _print_query_result(_load_sql_query("winners.sql"))
+
+
+def cmd_winners_no_eval(_args: argparse.Namespace) -> None:
+    """Top completed train runs with no evaluate run yet (winners_no_eval.sql)."""
+    _print_query_result(_load_sql_query("winners_no_eval.sql"))
+
+
 def cmd_status(args: argparse.Namespace) -> None:
     run = get_training_run(args.run)
     if run is None:
@@ -161,6 +215,15 @@ def build_parser() -> argparse.ArgumentParser:
     sr = sub.add_parser("status", help="Show details for a training run")
     sr.add_argument("--run", type=int, required=True, help="Run ID")
 
+    sub.add_parser(
+        "winners",
+        help="Print ranked winners (holdout Sharpe) — infra/scripts/winners.sql",
+    )
+    sub.add_parser(
+        "winners-no-eval",
+        help="Top train runs without an eval run — infra/scripts/winners_no_eval.sql",
+    )
+
     return parser
 
 
@@ -170,6 +233,8 @@ _COMMANDS = {
     "evaluate": cmd_evaluate,
     "list": cmd_list,
     "status": cmd_status,
+    "winners": cmd_winners,
+    "winners-no-eval": cmd_winners_no_eval,
 }
 
 
