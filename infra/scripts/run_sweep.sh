@@ -23,7 +23,7 @@ PENDING=$(wc -l < /tmp/pending_models.txt | tr -d ' ')
 echo "Total pending: $PENDING"
 
 if [ "$PENDING" -eq 0 ]; then
-  echo "No pending models found. Register configs first (sweep_phase1.py etc.)"
+  echo "No pending models found. Register configs first (backend/scripts/sweep_phase1.py etc.)"
   exit 0
 fi
 

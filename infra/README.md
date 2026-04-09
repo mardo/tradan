@@ -370,14 +370,13 @@ infra/
 └── scripts/
     ├── cloud-init-base.yaml   # Provisions base droplet on first boot
     ├── cloud-init-train.yaml  # Provisions training droplet on first boot
-    ├── sweep_phase1.py        # Register 63 BTCUSDT baseline configs
-    ├── sweep_phase2.py        # Register hyperparameter variants from Phase 1 winners
-    ├── sweep_phase3.py        # Register long-training configs from Phase 2 winners
     ├── run_sweep.sh           # Fan out N parallel training workers
     ├── evaluate_winners.sh    # Run eval on top 20 unevaluated models
     ├── winners.sql            # Ranked winner query with filter chain
     └── winners_no_eval.sql    # Queue of models needing evaluation
 ```
+
+**Model sweep registration** (Postgres + `trainer` code) lives next to the app: `backend/scripts/sweep_phase1.py`, `sweep_phase2.py`, `sweep_phase3.py`. Run from `backend/` with `uv run python scripts/sweep_phase1.py` (see `backend/worker.md`).
 
 ---
 

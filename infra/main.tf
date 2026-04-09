@@ -51,11 +51,11 @@ resource "digitalocean_firewall" "tradan" {
     source_addresses = [var.operator_ip]
   }
 
-  # PostgreSQL: only from within VPC (dynamically references actual VPC CIDR)
+  # PostgreSQL: always allow from VPC; add specific worker IPs or open fully when requested.
   inbound_rule {
     protocol         = "tcp"
     port_range       = "5432"
-    source_addresses = [digitalocean_vpc.tradan.ip_range]
+    source_addresses = var.db_public_access ? ["0.0.0.0/0", "::/0"] : concat([digitalocean_vpc.tradan.ip_range], var.db_worker_ips)
   }
 
   # Allow all outbound (package installs, git clone, etc.)

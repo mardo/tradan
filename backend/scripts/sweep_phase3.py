@@ -4,20 +4,23 @@ Phase 3 — Long training.
 
 Reads top 5 Phase 2 winners from DB, retrains them with 5M timesteps each.
 3 seeds per config = up to 15 runs total.
+
+Requires Phase 2 model names to contain `_p2_` (see sweep_phase2.py).
+
+Run from repo: cd backend && uv run python scripts/sweep_phase3.py
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-BACKEND = Path(__file__).resolve().parent.parent.parent / "backend"
-sys.path.insert(0, str(BACKEND / "src"))
-
 from dotenv import load_dotenv
-load_dotenv(BACKEND / ".env")
+
+BACKEND_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(BACKEND_ROOT / ".env")
 
 from ingester.db import connect
-from trainer.config import ALL_KLINE_COLUMNS, ExchangeConfig, ModelConfig
+from trainer.config import ModelConfig
 from trainer.db import save_model_config
 
 SEEDS = [42, 123, 456]
@@ -70,12 +73,9 @@ def main() -> None:
         base_cfg = ModelConfig.from_dict(winner["config"])
 
         for seed_idx in range(len(SEEDS)):
-            # Build a clean Phase 3 name from the winner's config attributes
             interval = base_cfg.intervals[0]
             algo = base_cfg.algorithm.lower()
             lb = base_cfg.lookback_window
-            lr = base_cfg.learning_rate
-            # Reuse lr_slug logic inline
             lr_str = f"{base_cfg.learning_rate:.0e}".replace("e-0", "em").replace("e-", "em")
             name = f"btc_{interval}_{algo}_lb{lb}_{lr_str}_{PHASE}_s{seed_idx}"
             config = ModelConfig(
@@ -94,7 +94,7 @@ def main() -> None:
             count += 1
 
     print(f"\nDone. {count} Phase 3 configs registered (5M timesteps each).")
-    print("Run: bash /opt/tradan/infra/scripts/run_sweep.sh")
+    print("Train: uv run train worker  |  Or: bash ../infra/scripts/run_sweep.sh")
 
 
 if __name__ == "__main__":

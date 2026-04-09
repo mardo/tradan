@@ -39,14 +39,19 @@ runcmd:
     mount "$DEVICE" /mnt/pgdata
     echo "$DEVICE /mnt/pgdata ext4 defaults,nofail 0 2" >> /etc/fstab
 
-  # Move the initialized cluster from local disk to the volume.
-  # Ubuntu keeps config in /etc/postgresql/VERSION/main/ and data in
-  # /var/lib/postgresql/VERSION/main/ - we only move the data directory.
+  # Move the initialized cluster from local disk to the volume — FIRST TIME ONLY.
+  # If the volume already has a PG cluster (PG_VERSION file exists), skip the rsync
+  # so we don't overwrite existing data when the droplet is replaced/rebuilt.
   - |
     PG_VER=$(ls /etc/postgresql/ | head -1)
     mkdir -p /mnt/pgdata/$PG_VER/main
-    rsync -a /var/lib/postgresql/$PG_VER/main/ /mnt/pgdata/$PG_VER/main/
-    chown -R postgres:postgres /mnt/pgdata
+    if [ ! -f /mnt/pgdata/$PG_VER/main/PG_VERSION ]; then
+      echo "Fresh volume detected — copying initial cluster to pgdata volume..."
+      rsync -a /var/lib/postgresql/$PG_VER/main/ /mnt/pgdata/$PG_VER/main/
+      chown -R postgres:postgres /mnt/pgdata
+    else
+      echo "Existing cluster found on pgdata volume — skipping rsync to preserve data."
+    fi
 
   # Point postgresql.conf at the new data directory on the volume
   - |
@@ -54,16 +59,32 @@ runcmd:
     PG_CONF=$(find /etc/postgresql -name "postgresql.conf" | head -1)
     sed -i "/^#*data_directory/c\data_directory = '/mnt/pgdata/$PG_VER/main'" "$PG_CONF"
 
-  # Configure PostgreSQL to listen on localhost + private VPC IP
+  # Configure PostgreSQL listen addresses.
+  # Listen on all interfaces when any external access is enabled (public or specific worker IPs).
   - |
     PRIVATE_IP=$(curl -s http://169.254.169.254/metadata/v1/interfaces/private/0/ipv4/address)
     PG_CONF=$(find /etc/postgresql -name "postgresql.conf" | head -1)
+%{ if db_public_access || length(db_worker_ips) > 0 ~}
+    sed -i "/^#*listen_addresses/c\listen_addresses = '*'" "$PG_CONF"
+%{ else ~}
     sed -i "/^#*listen_addresses/c\listen_addresses = 'localhost,$PRIVATE_IP'" "$PG_CONF"
+%{ endif ~}
 
-  # Allow connections from VPC private range (vpc_cidr matches digitalocean_vpc.tradan.ip_range)
+  # pg_hba.conf: always allow VPC; add specific worker IPs or open fully when requested.
   - |
     PG_HBA=$(find /etc/postgresql -name "pg_hba.conf" | head -1)
     echo "host    ${db_name}    ${db_user}    ${vpc_cidr}    scram-sha-256" >> "$PG_HBA"
+%{ for ip in db_worker_ips ~}
+  - |
+    PG_HBA=$(find /etc/postgresql -name "pg_hba.conf" | head -1)
+    echo "host    ${db_name}    ${db_user}    ${ip}    scram-sha-256" >> "$PG_HBA"
+%{ endfor ~}
+%{ if db_public_access ~}
+  - |
+    PG_HBA=$(find /etc/postgresql -name "pg_hba.conf" | head -1)
+    echo "host    ${db_name}    ${db_user}    0.0.0.0/0    scram-sha-256" >> "$PG_HBA"
+    echo "host    ${db_name}    ${db_user}    ::/0         scram-sha-256" >> "$PG_HBA"
+%{ endif ~}
 
   # Start PostgreSQL with the volume-backed data directory and enable on boot
   - systemctl start postgresql
@@ -92,6 +113,34 @@ runcmd:
   # Install Python dependencies and run migrations
   - cd /opt/tradan/backend && /root/.local/bin/uv sync
   - cd /opt/tradan/backend && /root/.local/bin/uv run ingest migrate
+
+%{ if attach_models_volume ~}
+  # Mount the models volume (distributed worker mode: train_enabled=false).
+  # Workers rsync trained model files here via MODELS_RSYNC_TARGET.
+  - mkdir -p /mnt/models
+  - |
+    for i in $(seq 1 6); do
+      DEVICE=$(ls /dev/disk/by-id/scsi-0DO_Volume_${models_volume_name} 2>/dev/null | head -1)
+      if [ -n "$DEVICE" ]; then
+        break
+      fi
+      echo "Waiting for models volume ($i/6)..."
+      sleep 5
+    done
+    if [ -z "$DEVICE" ]; then
+      echo "WARNING: models volume not found after 30s - models will go to local disk"
+    else
+      mount "$DEVICE" /mnt/models
+      echo "$DEVICE /mnt/models ext4 defaults,nofail 0 2" >> /etc/fstab
+    fi
+  # Symlink trained_models -> /mnt/models so workers can rsync to either path
+  - rm -rf /opt/tradan/trained_models
+  - ln -s /mnt/models /opt/tradan/trained_models
+%{ else ~}
+  # No models volume on base (train droplet holds it in single-machine mode).
+  # Create a plain directory as a fallback landing spot.
+  - mkdir -p /opt/tradan/trained_models
+%{ endif ~}
 
   # Create log directory for ingest services
   - mkdir -p /var/log/tradan

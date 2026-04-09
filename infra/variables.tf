@@ -48,7 +48,7 @@ variable "train_enabled" {
 variable "train_droplet_size" {
   description = "CPU-optimized droplet size: c-16 (14 workers), c-32 (28 workers), c-48 (44 workers)"
   type        = string
-  default     = "c-16"
+  default     = "c-32"
 
   validation {
     condition     = contains(["c-16", "c-32", "c-48"], var.train_droplet_size)
@@ -83,4 +83,16 @@ variable "ingest_retry_enabled" {
   description = "Whether init-symbol.sh should run the fill-gaps/retry loop after the initial ingest run. Set to true to automatically repair gaps; false to skip retries and just run enqueue+run+verify."
   type        = bool
   default     = false
+}
+
+variable "db_public_access" {
+  description = "Open PostgreSQL port 5432 to 0.0.0.0/0. Temporary — for distributed training workers connecting directly without an SSH tunnel. Disable and re-apply when training is done."
+  type        = bool
+  default     = false
+}
+
+variable "db_worker_ips" {
+  description = "CIDRs allowed to reach PostgreSQL from outside the VPC (e.g. [\"1.2.3.4/32\"] for your laptop). Preferred over db_public_access — only the listed IPs are whitelisted. Set in infra/.env as TF_VAR_db_worker_ips='[\"x.x.x.x/32\"]'."
+  type        = list(string)
+  default     = []
 }

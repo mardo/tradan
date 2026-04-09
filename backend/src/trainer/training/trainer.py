@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+import queue
+import threading
+import time
 from pathlib import Path
 
 import torch
@@ -17,6 +20,7 @@ from trainer.db import (
     create_training_run,
     fail_training_run,
     get_model_config_id,
+    ping_model_claim,
     save_pnl_snapshots,
 )
 from trainer.env.data_feed import DataFeed, load_data_feed
@@ -32,6 +36,12 @@ MODELS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "trained_mod
 
 
 class PnlSnapshotCallback(BaseCallback):
+    """Periodically persists PnL snapshots to the database.
+
+    DB writes happen on a dedicated background thread so the training loop is
+    never blocked waiting for network I/O to the base droplet.
+    """
+
     def __init__(
         self, env: TradingEnv, run_id: int, interval: int = 100, verbose: int = 0
     ) -> None:
@@ -41,6 +51,29 @@ class PnlSnapshotCallback(BaseCallback):
         self.interval = interval
         self._buffer: list[dict] = []
         self._last_flushed = 0
+        self._write_queue: queue.Queue[list[dict] | None] = queue.Queue()
+        self._db_thread = threading.Thread(
+            target=self._db_writer, daemon=True, name=f"pnl-writer-{run_id}"
+        )
+        self._db_thread.start()
+
+    def _db_writer(self) -> None:
+        """Drain the write queue and persist batches; runs on a background thread."""
+        conn = connect()
+        try:
+            while True:
+                batch = self._write_queue.get()
+                try:
+                    if batch is None:  # sentinel — training finished
+                        return
+                    try:
+                        save_pnl_snapshots(conn, batch)
+                    except Exception as exc:
+                        print(f"  [pnl-writer] DB write failed: {exc}")
+                finally:
+                    self._write_queue.task_done()
+        finally:
+            conn.close()
 
     def _on_step(self) -> bool:
         if self.env.pnl_history and len(self.env.pnl_history) % self.interval == 0:
@@ -56,18 +89,110 @@ class PnlSnapshotCallback(BaseCallback):
     def _flush(self) -> None:
         if not self._buffer:
             return
-        conn = connect()
-        try:
-            save_pnl_snapshots(conn, self._buffer)
-            self._buffer.clear()
-        finally:
-            conn.close()
+        # Hand the batch off to the background writer; don't block the training thread.
+        self._write_queue.put(list(self._buffer))
+        self._buffer.clear()
 
     def _on_training_end(self) -> None:
         new_entries = self.env.pnl_history[self._last_flushed:]
         for entry in new_entries:
             self._buffer.append({**entry, "training_run_id": self.run_id})
         self._flush()
+        # Send sentinel and wait for all queued writes to land before returning.
+        self._write_queue.put(None)
+        self._db_thread.join()
+
+
+class TrainingProgressCallback(BaseCallback):
+    """Renders an in-place progress bar with ETA.
+
+    Example:
+      [================------------------------]  40.0%  400,000/1,000,000 steps  eta 12m 34s
+    """
+
+    _BAR_WIDTH = 40
+    _REFRESH_SECS = 0.5  # max two redraws per second
+
+    def __init__(self, total_timesteps: int, verbose: int = 0) -> None:
+        super().__init__(verbose)
+        self._total = total_timesteps
+        self._last_print = 0.0
+        self._start: float | None = None
+
+    def _on_step(self) -> bool:
+        if self._start is None:
+            self._start = time.monotonic()
+        now = time.monotonic()
+        if now - self._last_print >= self._REFRESH_SECS:
+            self._render(now)
+            self._last_print = now
+        return True
+
+    def _on_training_end(self) -> None:
+        self._render(time.monotonic(), final=True)
+        print()  # newline so subsequent output starts on a fresh line
+
+    @staticmethod
+    def _fmt_seconds(secs: float) -> str:
+        secs = int(secs)
+        h, rem = divmod(secs, 3600)
+        m, s = divmod(rem, 60)
+        if h:
+            return f"{h}h {m:02d}m {s:02d}s"
+        if m:
+            return f"{m}m {s:02d}s"
+        return f"{s}s"
+
+    def _render(self, now: float, final: bool = False) -> None:
+        pct = min(self.num_timesteps / self._total, 1.0)
+        filled = int(self._BAR_WIDTH * pct)
+        bar = "=" * filled + "-" * (self._BAR_WIDTH - filled)
+
+        eta_str = ""
+        if final:
+            elapsed = now - (self._start or now)
+            eta_str = f"  elapsed {self._fmt_seconds(elapsed)}"
+        elif self._start is not None and pct > 0:
+            elapsed = now - self._start
+            remaining = elapsed / pct * (1.0 - pct)
+            eta_str = f"  eta {self._fmt_seconds(remaining)}"
+
+        print(
+            f"\r  [{bar}] {pct * 100:5.1f}%  "
+            f"{self.num_timesteps:,}/{self._total:,} steps{eta_str}",
+            end="",
+            flush=True,
+        )
+
+
+class ModelPingThread:
+    """Background thread that pings last_ping every `interval` seconds while training.
+
+    Keeps the model claim alive so release-claims doesn't reclaim it mid-run.
+    Stopped via stop(), which blocks until the thread exits.
+    """
+
+    def __init__(self, model_name: str, interval: int = 60) -> None:
+        self._model_name = model_name
+        self._interval = interval
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, daemon=True, name=f"ping-{model_name}"
+        )
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        self._thread.join(timeout=self._interval + 5)
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(self._interval):
+            try:
+                ping_model_claim(self._model_name)
+            except Exception as exc:
+                print(f"  [ping] DB write failed: {exc}")
 
 
 def compute_metrics(env: TradingEnv) -> dict:
@@ -115,12 +240,12 @@ def train_model(
     algo_override: str | None = None,
     timesteps_override: int | None = None,
 ) -> int:
-    # Cap PyTorch's intraop thread pool so parallel workers don't saturate all cores.
-    # OMP_NUM_THREADS is set by run_sweep.sh to (nproc / worker_count).
-    # When TRADAN_FULL_THREADS=1 (sequential mode), skip capping so PyTorch uses all cores.
-    if not os.environ.get("TRADAN_FULL_THREADS"):
-        _cpu_threads = int(os.environ.get("OMP_NUM_THREADS", os.cpu_count() or 1))
-        torch.set_num_threads(_cpu_threads)
+    # Only cap PyTorch's thread pool when OMP_NUM_THREADS is explicitly set
+    # (e.g. by run_sweep.sh for multi-worker parallel mode). By default, let
+    # PyTorch use all available cores — correct for single-worker/distributed mode.
+    omp = os.environ.get("OMP_NUM_THREADS")
+    if omp:
+        torch.set_num_threads(int(omp))
         torch.set_num_interop_threads(1)
 
     algorithm = algo_override or config.algorithm
@@ -136,6 +261,9 @@ def train_model(
 
     run_id = create_training_run(config_id, "train", algorithm)
     print(f"Training run #{run_id} started: model={config.name} algo={algorithm} steps={total_timesteps}")
+
+    ping_thread = ModelPingThread(config.name)
+    ping_thread.start()
 
     try:
         conn = connect()
@@ -168,6 +296,7 @@ def train_model(
         pnl_cb = PnlSnapshotCallback(
             env=env, run_id=run_id, interval=config.snapshot_interval
         )
+        progress_cb = TrainingProgressCallback(total_timesteps=total_timesteps)
 
         model = algo_cls(
             "MultiInputPolicy",
@@ -177,7 +306,7 @@ def train_model(
         )
         model.learn(
             total_timesteps=total_timesteps,
-            callback=[checkpoint_cb, pnl_cb],
+            callback=[checkpoint_cb, pnl_cb, progress_cb],
         )
 
         model_path = str(model_dir / "model.zip")
@@ -199,3 +328,6 @@ def train_model(
         fail_training_run(run_id, str(e))
         print(f"Training run #{run_id} FAILED: {e}")
         raise
+
+    finally:
+        ping_thread.stop()

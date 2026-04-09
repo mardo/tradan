@@ -7,20 +7,18 @@ Generates and registers 63 model configs:
 
 All other parameters fixed. Purpose: find which interval+algorithm combos
 work at all before varying hyperparameters.
+
+Run from repo: cd backend && uv run python scripts/sweep_phase1.py
 """
 from __future__ import annotations
 
-import sys
 from itertools import product
 from pathlib import Path
 
-# Resolve backend path relative to this script's location:
-# infra/scripts/sweep_phase1.py -> ../../backend
-BACKEND = Path(__file__).resolve().parent.parent.parent / "backend"
-sys.path.insert(0, str(BACKEND / "src"))
-
 from dotenv import load_dotenv
-load_dotenv(BACKEND / ".env")
+
+BACKEND_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(BACKEND_ROOT / ".env")
 
 from trainer.config import ALL_KLINE_COLUMNS, ExchangeConfig, ModelConfig
 from trainer.db import save_model_config
@@ -57,7 +55,8 @@ def main() -> None:
         print(f"  Registered: {name}")
 
     print(f"\nDone. {len(combos)} configs registered.")
-    print("Run: bash /opt/tradan/infra/scripts/run_sweep.sh")
+    print("Train (one process, DB queue): uv run train worker")
+    print("Or fan-out workers: bash ../infra/scripts/run_sweep.sh")
 
 
 if __name__ == "__main__":

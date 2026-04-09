@@ -162,6 +162,138 @@ def save_pnl_snapshots(
     conn.commit()
 
 
+def update_model_path(run_id: int, model_path: str) -> None:
+    conn = connect()
+    try:
+        conn.execute(
+            "UPDATE training_runs SET model_path = %s WHERE id = %s",
+            (model_path, run_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def claim_pending_model(stale_minutes: int = 120) -> tuple[str, ModelConfig] | None:
+    """Atomically claims one unclaimed, untrained model. Returns (name, config) or None.
+
+    A model is claimable when:
+    - claimed_at IS NULL or older than stale_minutes (worker crashed before starting a run)
+    - AND no completed training run exists
+    - AND no recently-started running run exists (also guarded by stale_minutes)
+    """
+    conn = connect()
+    try:
+        row = conn.execute(
+            """
+            WITH candidate AS (
+                SELECT id FROM model_configs
+                WHERE (claimed_at IS NULL OR claimed_at < now() - %s::interval)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM training_runs tr
+                      WHERE tr.model_config_id = model_configs.id
+                        AND (tr.status = 'completed'
+                             OR (tr.status = 'running'
+                                 AND tr.started_at > now() - %s::interval))
+                  )
+                ORDER BY id
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE model_configs SET claimed_at = now(), last_ping = now()
+            FROM candidate
+            WHERE model_configs.id = candidate.id
+            RETURNING model_configs.name, model_configs.config_json
+            """,
+            (f"{stale_minutes} minutes", f"{stale_minutes} minutes"),
+        ).fetchone()
+        conn.commit()
+        if row is None:
+            return None
+        return row[0], ModelConfig.from_dict(row[1])
+    finally:
+        conn.close()
+
+
+def ping_model_claim(name: str) -> None:
+    """Update last_ping to now() for the given model config (keepalive from worker)."""
+    conn = connect()
+    try:
+        conn.execute(
+            "UPDATE model_configs SET last_ping = now() WHERE name = %s",
+            (name,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def list_stale_claims(older_than_seconds: int) -> list[dict]:
+    """Return model_configs whose claim has gone silent for longer than older_than_seconds.
+
+    Staleness is measured against last_ping when available, falling back to claimed_at
+    for models claimed before the ping column was added.
+    """
+    conn = connect()
+    try:
+        rows = conn.execute(
+            """
+            SELECT mc.name,
+                   mc.claimed_at,
+                   mc.last_ping,
+                   EXTRACT(EPOCH FROM (now() - COALESCE(mc.last_ping, mc.claimed_at)))::int
+                       AS silent_seconds
+            FROM model_configs mc
+            WHERE mc.claimed_at IS NOT NULL
+              AND COALESCE(mc.last_ping, mc.claimed_at) < now() - (%s || ' seconds')::interval
+              AND NOT EXISTS (
+                  SELECT 1 FROM training_runs tr
+                  WHERE tr.model_config_id = mc.id
+                    AND tr.status = 'running'
+                    AND tr.started_at > now() - (%s || ' seconds')::interval
+              )
+            ORDER BY COALESCE(mc.last_ping, mc.claimed_at)
+            """,
+            (older_than_seconds, older_than_seconds),
+        ).fetchall()
+        return [
+            {
+                "name": r[0],
+                "claimed_at": r[1],
+                "last_ping": r[2],
+                "silent_seconds": r[3],
+            }
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+def release_stale_claims(older_than_seconds: int) -> int:
+    """Null out claimed_at and last_ping for stale claims. Returns rows updated."""
+    conn = connect()
+    try:
+        cur = conn.execute(
+            """
+            UPDATE model_configs
+            SET claimed_at = NULL, last_ping = NULL
+            WHERE claimed_at IS NOT NULL
+              AND COALESCE(last_ping, claimed_at) < now() - (%s || ' seconds')::interval
+              AND NOT EXISTS (
+                  SELECT 1 FROM training_runs tr
+                  WHERE tr.model_config_id = model_configs.id
+                    AND tr.status = 'running'
+                    AND tr.started_at > now() - (%s || ' seconds')::interval
+              )
+            """,
+            (older_than_seconds, older_than_seconds),
+        )
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
+
+
 def get_training_run(run_id: int) -> dict | None:
     conn = connect()
     try:

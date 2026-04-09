@@ -8,6 +8,10 @@ then generates variants across:
   5 winners × 36 = up to 180 runs total
 
 Preserves interval + algorithm from each winner; varies lookback and learning rate.
+
+Requires Phase 1 model names to contain `_p1_` (see sweep_phase1.py).
+
+Run from repo: cd backend && uv run python scripts/sweep_phase2.py
 """
 from __future__ import annotations
 
@@ -15,11 +19,10 @@ import sys
 from itertools import product
 from pathlib import Path
 
-BACKEND = Path(__file__).resolve().parent.parent.parent / "backend"
-sys.path.insert(0, str(BACKEND / "src"))
-
 from dotenv import load_dotenv
-load_dotenv(BACKEND / ".env")
+
+BACKEND_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(BACKEND_ROOT / ".env")
 
 from ingester.db import connect
 from trainer.config import ALL_KLINE_COLUMNS, ExchangeConfig, ModelConfig
@@ -102,7 +105,7 @@ def main() -> None:
             count += 1
 
     print(f"\nDone. {count} Phase 2 configs registered.")
-    print("Run: bash /opt/tradan/infra/scripts/run_sweep.sh")
+    print("Train: uv run train worker  |  Or: bash ../infra/scripts/run_sweep.sh")
 
 
 if __name__ == "__main__":

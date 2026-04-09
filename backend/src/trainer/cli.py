@@ -6,9 +6,12 @@ from pathlib import Path
 
 from ingester.db import connect
 from trainer.db import (
+    claim_pending_model,
     get_training_run,
     list_model_configs,
+    list_stale_claims,
     load_model_config,
+    release_stale_claims,
     save_model_config,
 )
 from trainer.models.btc_config import make_btc_config
@@ -145,6 +148,165 @@ def cmd_winners(_args: argparse.Namespace) -> None:
     _print_query_result(_load_sql_query("winners.sql"))
 
 
+def _rsync_model(run_id: int, model_dir: Path, rsync_target: str) -> bool:
+    """Rsync model dir to target, update DB path, delete local copy on success.
+
+    rsync_target format: user@host:/remote/base/dir
+      e.g. root@BASE_IP:/mnt/models  (when train_enabled=false, models volume on base)
+           root@BASE_IP:/opt/tradan/trained_models  (symlinks to same place)
+    The run dir is uploaded as: <rsync_target>/<model_name>/<run_id>/
+
+    SSH key is taken from MODELS_SSH_KEY env var when set; otherwise the SSH agent
+    / default key is used. Password authentication is always disabled.
+    Returns True if rsync succeeded and local files were cleaned up.
+    """
+    import os
+    import shlex
+    import shutil
+    import subprocess
+
+    from trainer.db import update_model_path
+
+    ssh_key = os.environ.get("MODELS_SSH_KEY")
+    ssh_cmd = "ssh -o StrictHostKeyChecking=accept-new -o PasswordAuthentication=no"
+    if ssh_key:
+        ssh_cmd += f" -i {shlex.quote(os.path.expanduser(ssh_key))}"
+
+    remote_run_dir = f"{rsync_target}/{model_dir.parent.name}/{model_dir.name}/"
+    cmd = [
+        "rsync", "-av", "--mkpath",
+        "-e", ssh_cmd,
+        str(model_dir) + "/",
+        remote_run_dir,
+    ]
+    print(f"  Uploading models: {' '.join(shlex.quote(c) for c in cmd)}")
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        print(f"  WARNING: rsync failed (exit {result.returncode}). Models kept locally at {model_dir}")
+        return False
+
+    remote_model_path = f"{rsync_target}/{model_dir.parent.name}/{model_dir.name}/model.zip"
+    update_model_path(run_id, remote_model_path)
+    print(f"  DB model_path updated to: {remote_model_path}")
+
+    shutil.rmtree(model_dir, ignore_errors=True)
+    print(f"  Local model dir removed: {model_dir}")
+    return True
+
+
+def cmd_worker(args: argparse.Namespace) -> None:
+    import os
+    import threading
+    import time
+
+    from trainer.training.trainer import MODELS_DIR, train_model
+
+    poll_seconds = args.poll_seconds
+    rsync_target = os.environ.get("MODELS_RSYNC_TARGET")
+
+    # Set OMP_NUM_THREADS once for all training runs in this worker process.
+    # trainer.py reads this env var at the start of each train_model() call.
+    # Formula mirrors run_sweep.sh: floor(nproc * pct / 100), minimum 1.
+    cpus = os.cpu_count() or 1
+    threads = max(1, cpus * args.cpu_usage // 100)
+    os.environ["OMP_NUM_THREADS"] = str(threads)
+    os.environ["MKL_NUM_THREADS"] = str(threads)
+    print(f"CPU threads: {threads}/{cpus} (--cpu-usage {args.cpu_usage}%)")
+
+    if rsync_target:
+        print(f"MODELS_RSYNC_TARGET={rsync_target} — models will be uploaded after each run.")
+    else:
+        print("MODELS_RSYNC_TARGET not set — models saved locally only.")
+
+    # Track background upload threads so we can wait for them before exiting.
+    upload_threads: list[threading.Thread] = []
+
+    while True:
+        # Reap finished upload threads to avoid unbounded growth.
+        upload_threads = [t for t in upload_threads if t.is_alive()]
+
+        result = claim_pending_model()
+        if result is None:
+            if poll_seconds == 0:
+                break
+            print(f"No pending models. Polling again in {poll_seconds}s...")
+            time.sleep(poll_seconds)
+            continue
+
+        name, config = result
+        print(f"Claimed: {name}")
+        run_id = None
+        try:
+            run_id = train_model(config)
+        except Exception as e:
+            print(f"FAILED: {name}: {e}")
+            # fail_training_run already called inside train_model; continue to next
+
+        # Upload happens once per completed training run (not per iteration).
+        # Run it on a background thread so the worker can claim the next model
+        # immediately while the rsync transfer proceeds in parallel.
+        if run_id is not None and rsync_target:
+            model_dir = MODELS_DIR / name / str(run_id)
+            if model_dir.exists():
+                t = threading.Thread(
+                    target=_rsync_model,
+                    args=(run_id, model_dir, rsync_target),
+                    daemon=True,
+                    name=f"upload-{run_id}",
+                )
+                t.start()
+                upload_threads.append(t)
+                print(f"  Upload started in background (thread: upload-{run_id}).")
+            else:
+                print(f"  WARNING: expected model dir not found: {model_dir}")
+
+    # Drain any in-flight uploads before the process exits.
+    active = [t for t in upload_threads if t.is_alive()]
+    if active:
+        print(f"No pending models. Waiting for {len(active)} upload(s) to finish...")
+        for t in active:
+            t.join()
+    print("No pending models. Exiting.")
+
+
+def cmd_release_claims(args: argparse.Namespace) -> None:
+    older_than = args.older_than_seconds
+    stale = list_stale_claims(older_than)
+
+    if not stale:
+        print(f"No stale claims found (older than {older_than}s).")
+        return
+
+    print(f"Found {len(stale)} model(s) with claims older than {older_than} seconds:\n")
+    print(f"  {'Name':<30} {'Last Ping':<25} {'Silent For'}")
+    print("  " + "-" * 72)
+    for m in stale:
+        age = m["silent_seconds"]
+        if age >= 3600:
+            age_str = f"{age // 3600}h {(age % 3600) // 60}m"
+        elif age >= 60:
+            age_str = f"{age // 60}m {age % 60}s"
+        else:
+            age_str = f"{age}s"
+        ping_ts = m["last_ping"] or m["claimed_at"]
+        ping = ping_ts.strftime("%Y-%m-%d %H:%M:%S") if ping_ts else "—"
+        print(f"  {m['name']:<30} {ping:<25} {age_str}")
+
+    print()
+    try:
+        answer = input(f"Release these {len(stale)} claim(s)? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("\nAborted.")
+        return
+
+    if answer != "y":
+        print("Aborted.")
+        return
+
+    released = release_stale_claims(older_than)
+    print(f"Released {released} claim(s).")
+
+
 def cmd_winners_no_eval(_args: argparse.Namespace) -> None:
     """Top completed train runs with no evaluate run yet (winners_no_eval.sql)."""
     _print_query_result(_load_sql_query("winners_no_eval.sql"))
@@ -224,6 +386,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="Top train runs without an eval run — infra/scripts/winners_no_eval.sql",
     )
 
+    rc = sub.add_parser(
+        "release-claims",
+        help="Release model claims not updated within a given timeout",
+        description=(
+            "List model configs whose claim is older than --older-than-seconds "
+            "with no active running training run, then optionally null out the claim "
+            "so another worker can pick them up."
+        ),
+    )
+    rc.add_argument(
+        "--older-than-seconds",
+        type=int,
+        default=3600,
+        dest="older_than_seconds",
+        metavar="SECONDS",
+        help="Release claims not updated for this many seconds (default: 3600). Can be as low as 1.",
+    )
+
+    wk = sub.add_parser(
+        "worker",
+        help="Claim and train pending models one at a time until none remain",
+        description=(
+            "Claim and train models until none remain. "
+            "Set MODELS_RSYNC_TARGET=user@host:/path to upload each run's model dir "
+            "to a remote host after training and delete the local copy."
+        ),
+    )
+    wk.add_argument(
+        "--poll-seconds",
+        type=int,
+        default=0,
+        dest="poll_seconds",
+        help="Seconds to wait between polls when no pending models exist. 0 = exit immediately (default).",
+    )
+    wk.add_argument(
+        "--cpu-usage",
+        type=int,
+        default=85,
+        dest="cpu_usage",
+        metavar="PCT",
+        help="Target CPU usage percentage (1-100). Sets OMP/MKL thread count to floor(nproc * PCT / 100). Default: 85.",
+    )
+
     return parser
 
 
@@ -235,6 +440,8 @@ _COMMANDS = {
     "status": cmd_status,
     "winners": cmd_winners,
     "winners-no-eval": cmd_winners_no_eval,
+    "release-claims": cmd_release_claims,
+    "worker": cmd_worker,
 }
 
 
