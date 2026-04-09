@@ -204,19 +204,14 @@ def cmd_worker(args: argparse.Namespace) -> None:
     poll_seconds = args.poll_seconds
     rsync_target = os.environ.get("MODELS_RSYNC_TARGET")
 
-    # Set OMP_NUM_THREADS once for all training runs in this worker process.
-    # trainer.py reads this env var at the start of each train_model() call.
-    # Formula mirrors run_sweep.sh: floor(nproc * pct / 100), minimum 1.
+    # Only cap OMP/MKL thread counts when explicitly throttling below 100%.
+    # At 100% (default for single-worker mode) we leave the env vars unset so
+    # PyTorch manages its own thread pools without interference.
     cpus = os.cpu_count() or 1
-    threads = max(1, cpus * args.cpu_usage // 100)
-    os.environ["OMP_NUM_THREADS"] = str(threads)
-    os.environ["MKL_NUM_THREADS"] = str(threads)
-    print(f"CPU threads: {threads}/{cpus} (--cpu-usage {args.cpu_usage}%)")
-
-    if rsync_target:
-        print(f"MODELS_RSYNC_TARGET={rsync_target} — models will be uploaded after each run.")
-    else:
-        print("MODELS_RSYNC_TARGET not set — models saved locally only.")
+    if args.cpu_usage < 100:
+        threads = max(1, cpus * args.cpu_usage // 100)
+        os.environ["OMP_NUM_THREADS"] = str(threads)
+        os.environ["MKL_NUM_THREADS"] = str(threads)
 
     # Track background upload threads so we can wait for them before exiting.
     upload_threads: list[threading.Thread] = []
@@ -229,12 +224,11 @@ def cmd_worker(args: argparse.Namespace) -> None:
         if result is None:
             if poll_seconds == 0:
                 break
-            print(f"No pending models. Polling again in {poll_seconds}s...")
             time.sleep(poll_seconds)
             continue
 
         name, config = result
-        print(f"Claimed: {name}")
+        print(f"claimed: {name}")
         run_id = None
         try:
             run_id = train_model(config)
@@ -256,17 +250,12 @@ def cmd_worker(args: argparse.Namespace) -> None:
                 )
                 t.start()
                 upload_threads.append(t)
-                print(f"  Upload started in background (thread: upload-{run_id}).")
             else:
-                print(f"  WARNING: expected model dir not found: {model_dir}")
+                print(f"WARNING: model dir not found: {model_dir}")
 
     # Drain any in-flight uploads before the process exits.
-    active = [t for t in upload_threads if t.is_alive()]
-    if active:
-        print(f"No pending models. Waiting for {len(active)} upload(s) to finish...")
-        for t in active:
-            t.join()
-    print("No pending models. Exiting.")
+    for t in [t for t in upload_threads if t.is_alive()]:
+        t.join()
 
 
 def cmd_release_claims(args: argparse.Namespace) -> None:
@@ -423,10 +412,10 @@ def build_parser() -> argparse.ArgumentParser:
     wk.add_argument(
         "--cpu-usage",
         type=int,
-        default=85,
+        default=100,
         dest="cpu_usage",
         metavar="PCT",
-        help="Target CPU usage percentage (1-100). Sets OMP/MKL thread count to floor(nproc * PCT / 100). Default: 85.",
+        help="Target CPU usage percentage (1-100). At 100 (default) OMP/MKL are left unset so PyTorch manages its own thread pools. Below 100, sets OMP/MKL thread count to floor(nproc * PCT / 100).",
     )
 
     return parser

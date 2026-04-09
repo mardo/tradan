@@ -104,33 +104,30 @@ class PnlSnapshotCallback(BaseCallback):
 
 
 class TrainingProgressCallback(BaseCallback):
-    """Renders an in-place progress bar with ETA.
+    """Prints a brief progress line at most once per minute."""
 
-    Example:
-      [================------------------------]  40.0%  400,000/1,000,000 steps  eta 12m 34s
-    """
+    _REFRESH_SECS = 60.0
+    _STEP_CHECK_INTERVAL = 1000  # only check the clock every N steps
 
-    _BAR_WIDTH = 40
-    _REFRESH_SECS = 0.5  # max two redraws per second
-
-    def __init__(self, total_timesteps: int, verbose: int = 0) -> None:
+    def __init__(self, total_timesteps: int, label: str = "", verbose: int = 0) -> None:
         super().__init__(verbose)
         self._total = total_timesteps
+        self._label = label
         self._last_print = 0.0
         self._start: float | None = None
 
     def _on_step(self) -> bool:
         if self._start is None:
             self._start = time.monotonic()
-        now = time.monotonic()
-        if now - self._last_print >= self._REFRESH_SECS:
-            self._render(now)
-            self._last_print = now
+        if self.num_timesteps % self._STEP_CHECK_INTERVAL == 0:
+            now = time.monotonic()
+            if now - self._last_print >= self._REFRESH_SECS:
+                self._render(now)
+                self._last_print = now
         return True
 
     def _on_training_end(self) -> None:
         self._render(time.monotonic(), final=True)
-        print()  # newline so subsequent output starts on a fresh line
 
     @staticmethod
     def _fmt_seconds(secs: float) -> str:
@@ -145,24 +142,17 @@ class TrainingProgressCallback(BaseCallback):
 
     def _render(self, now: float, final: bool = False) -> None:
         pct = min(self.num_timesteps / self._total, 1.0)
-        filled = int(self._BAR_WIDTH * pct)
-        bar = "=" * filled + "-" * (self._BAR_WIDTH - filled)
-
-        eta_str = ""
+        prefix = f"{self._label}  " if self._label else ""
         if final:
             elapsed = now - (self._start or now)
-            eta_str = f"  elapsed {self._fmt_seconds(elapsed)}"
+            suffix = f"done  elapsed {self._fmt_seconds(elapsed)}"
         elif self._start is not None and pct > 0:
             elapsed = now - self._start
             remaining = elapsed / pct * (1.0 - pct)
-            eta_str = f"  eta {self._fmt_seconds(remaining)}"
-
-        print(
-            f"\r  [{bar}] {pct * 100:5.1f}%  "
-            f"{self.num_timesteps:,}/{self._total:,} steps{eta_str}",
-            end="",
-            flush=True,
-        )
+            suffix = f"{pct * 100:.1f}%  eta {self._fmt_seconds(remaining)}"
+        else:
+            suffix = f"{pct * 100:.1f}%"
+        print(f"  {prefix}{suffix}", flush=True)
 
 
 class ModelPingThread:
@@ -260,7 +250,7 @@ def train_model(
         raise ValueError(f"Model '{config.name}' not found in DB. Run create-model first.")
 
     run_id = create_training_run(config_id, "train", algorithm)
-    print(f"Training run #{run_id} started: model={config.name} algo={algorithm} steps={total_timesteps}")
+    print(f"run #{run_id}  {config.name}  {algorithm}  {total_timesteps:,} steps")
 
     ping_thread = ModelPingThread(config.name)
     ping_thread.start()
@@ -296,13 +286,16 @@ def train_model(
         pnl_cb = PnlSnapshotCallback(
             env=env, run_id=run_id, interval=config.snapshot_interval
         )
-        progress_cb = TrainingProgressCallback(total_timesteps=total_timesteps)
+        progress_cb = TrainingProgressCallback(
+            total_timesteps=total_timesteps,
+            label=f"{config.name} #{run_id}",
+        )
 
         model = algo_cls(
             "MultiInputPolicy",
             env,
             learning_rate=config.learning_rate,
-            verbose=1,
+            verbose=0,
         )
         model.learn(
             total_timesteps=total_timesteps,
@@ -315,18 +308,17 @@ def train_model(
         metrics = compute_metrics(env)
         complete_training_run(run_id, model_path=model_path, **metrics)
 
-        print(f"Training run #{run_id} completed.")
-        print(f"  Final equity: ${metrics['final_equity']:.2f}")
-        print(f"  Total PnL:    ${metrics['total_pnl']:.2f}")
-        print(f"  Win rate:     {metrics['win_rate']*100:.1f}%")
-        print(f"  Max drawdown: {metrics['max_drawdown']*100:.1f}%")
-        print(f"  Sharpe ratio: {metrics['sharpe_ratio']:.2f}")
-        print(f"  Model saved:  {model_path}")
+        print(
+            f"run #{run_id} done"
+            f"  pnl=${metrics['total_pnl']:+.2f}"
+            f"  sharpe={metrics['sharpe_ratio']:.2f}"
+            f"  wr={metrics['win_rate']*100:.1f}%"
+        )
         return run_id
 
     except Exception as e:
         fail_training_run(run_id, str(e))
-        print(f"Training run #{run_id} FAILED: {e}")
+        print(f"run #{run_id} FAILED: {e}")
         raise
 
     finally:
