@@ -1,15 +1,21 @@
 [Unit]
-Description=Tradan train worker health heartbeat (last-checked log)
+Description=Tradan train worker supervisor (log + start/restart watchdog if missing)
 After=network-online.target
 
 [Service]
 Type=simple
+# Only signal the health loop; do not SIGTERM the nohup watchdog+worker cgroup (default would kill both).
+KillMode=process
+# uv is installed under /root/.local/bin on train images (cloud-init)
+Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=/bin/bash /opt/tradan/infra/scripts/train_worker_health_loop.sh
 Restart=always
 RestartSec=5
 Environment=TRAIN_WORKER_HEALTH_INTERVAL_SEC=300
 Environment=TRAIN_WORKER_HEALTH_LOG=/var/log/train_worker_health.log
 Environment=TRAIN_WORKER_HEALTH_CHECK_PROCESS=1
+Environment=TRAIN_WORKER_SUPERVISE_RESTART=1
+Environment=TRAIN_WORKER_WATCHDOG_LOG=/var/log/train_worker_watchdog.log
 
 [Install]
 WantedBy=multi-user.target
