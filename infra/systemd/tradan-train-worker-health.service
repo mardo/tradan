@@ -1,0 +1,15 @@
+[Unit]
+Description=Tradan train worker health heartbeat (last-checked log)
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /opt/tradan/infra/scripts/train_worker_health_loop.sh
+Restart=always
+RestartSec=5
+Environment=TRAIN_WORKER_HEALTH_INTERVAL_SEC=300
+Environment=TRAIN_WORKER_HEALTH_LOG=/var/log/train_worker_health.log
+Environment=TRAIN_WORKER_HEALTH_CHECK_PROCESS=1
+
+[Install]
+WantedBy=multi-user.target
