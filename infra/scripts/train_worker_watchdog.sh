@@ -20,6 +20,40 @@ cd "$BACKEND"
 DELAY="${TRAIN_WORKER_RESTART_DELAY_SEC:-5}"
 STOP_OK="${TRAIN_WORKER_STOP_ON_SUCCESS:-0}"
 
+# Parse --cpu-usage PCT out of the forwarded args and translate it into
+# OMP/MKL thread caps *before* python imports torch. Without this, setting
+# those vars from inside cli.py runs too late (torch has already loaded).
+apply_cpu_usage_env() {
+  local pct=""
+  local args=("$@")
+  local i=0
+  while (( i < ${#args[@]} )); do
+    case "${args[$i]}" in
+      --cpu-usage)
+        pct="${args[$((i+1))]:-}"
+        break
+        ;;
+      --cpu-usage=*)
+        pct="${args[$i]#--cpu-usage=}"
+        break
+        ;;
+    esac
+    i=$((i+1))
+  done
+  if [[ -n "$pct" && "$pct" =~ ^[0-9]+$ && "$pct" -gt 0 && "$pct" -lt 100 ]]; then
+    local cpus threads
+    cpus="$(nproc 2>/dev/null || echo 1)"
+    threads=$(( cpus * pct / 100 ))
+    (( threads < 1 )) && threads=1
+    export OMP_NUM_THREADS="$threads"
+    export MKL_NUM_THREADS="$threads"
+    export OPENBLAS_NUM_THREADS="$threads"
+    export NUMEXPR_NUM_THREADS="$threads"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') supervisor: cpu-usage=${pct}% -> threads=${threads} (cpus=${cpus})"
+  fi
+}
+apply_cpu_usage_env "$@"
+
 on_sig() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') supervisor: caught signal, exiting"
   exit 130

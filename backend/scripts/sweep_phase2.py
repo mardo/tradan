@@ -53,7 +53,7 @@ def get_phase1_winners(conn, top_n: int) -> list[dict]:
           AND tr_eval.total_trades > 10
           AND tr_eval.total_pnl > 0
           AND tr_eval.max_drawdown < 0.25
-          AND tr_eval.total_pnl / NULLIF(tr_train.total_pnl, 0) > 0.5
+          AND tr_eval.total_pnl / NULLIF(tr_train.total_pnl, 0) > 0.20
         ORDER BY tr_eval.sharpe_ratio DESC
         LIMIT %s
         """,
