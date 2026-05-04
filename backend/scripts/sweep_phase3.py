@@ -42,7 +42,7 @@ def get_phase2_winners(conn, top_n: int) -> list[dict]:
             AND tr_train.run_type = 'train' AND tr_train.status = 'completed'
         JOIN training_runs tr_eval ON tr_eval.model_config_id = mc.id
             AND tr_eval.run_type = 'evaluate' AND tr_eval.status = 'completed'
-        WHERE mc.name LIKE '%_p2_%'
+        WHERE mc.name LIKE '%%_p2_%%'
           AND tr_eval.total_trades > 10
           AND tr_eval.total_pnl > 0
           AND tr_eval.max_drawdown < 0.25
