@@ -14,7 +14,7 @@ from live.feature_pipeline import build_live_observation
 from live.model_runner import ModelRunner
 from trainer.config import ModelConfig
 from trainer.env.action_decoder import DecoderState, decode_action
-from trainer.env.normalization import NormalizationStats
+from trainer.env.normalization import NormalizationStats, load_stats
 from trainer.env.observation import ObservationConfig
 
 
