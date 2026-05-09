@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 from trainer.config import ExchangeConfig
 from trainer.env.account import Account
+from trainer.env.action_decoder import OrderIntent
 
 
 @dataclass
@@ -158,6 +159,42 @@ class ExchangeSim:
             pos.size -= close_size
             pos.margin -= margin_released
         return pnl
+
+    def apply_intent(self, intent: "OrderIntent", current_price: float) -> dict:
+        """Apply a decoded OrderIntent: cancels first, then closes, then open.
+
+        Mirrors the original ordering in TradingEnv._process_actions so the
+        refactor is bit-identical.
+        """
+        cancelled = 0
+        for i in sorted(intent.cancels, reverse=True):
+            if 0 <= i < len(self.open_orders):
+                self.cancel_order(i)
+                cancelled += 1
+
+        closed = 0
+        # Close in ascending order (matches original behavior).
+        for ci in intent.closes:
+            if 0 <= ci.position_index < len(self.open_positions):
+                self.close_position(ci.position_index, ci.fraction, current_price)
+                closed += 1
+
+        placed = 0
+        if intent.open is not None:
+            op = intent.open
+            order = self.place_order(
+                direction=op.direction, trigger_price=op.trigger_price,
+                sl_price=op.sl_price, tp_prices=op.tp_prices,
+                tp_size_pcts=op.tp_size_pcts, margin=op.margin,
+            )
+            if order is not None:
+                placed = 1
+
+        return {
+            "orders_placed": placed,
+            "orders_cancelled": cancelled,
+            "positions_closed": closed,
+        }
 
     def _check_liquidations(self, high: float, low: float) -> list[FillEvent]:
         events: list[FillEvent] = []
