@@ -18,12 +18,16 @@ dependencies = [
     "torch>=2.2.0",
     "numpy>=1.26.0",
     "pandas>=2.2.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.7",
     "pytest>=8.0.0",
 ]
 
 [project.scripts]
 ingest = "ingester.cli:main"
 train = "trainer.cli:main"
+live-test = "live.cli:main"
+live-replay = "live.cli:replay_main"
 
 [build-system]
 requires = ["uv_build>=0.10.4,<0.11.0"]
