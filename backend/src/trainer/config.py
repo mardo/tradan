@@ -98,6 +98,10 @@ class ModelConfig:
     # Neural network learning rate. Controls how much weights update per gradient step.
     # Lower = more stable but slower convergence. Higher = faster but risk of instability.
     learning_rate: float = 3e-4
+    # Optional integer seed for reproducibility. Forwarded to SB3 algo and to env.reset.
+    # None means non-deterministic (matches pre-Phase-4A behavior). Set explicitly for
+    # seed-variance studies where reruns must match.
+    seed: int | None = None
 
     # How often (in env steps) to record a PnL snapshot to the database for tracking performance.
     snapshot_interval: int = 100
@@ -119,6 +123,7 @@ class ModelConfig:
             "algorithm": self.algorithm,
             "total_timesteps": self.total_timesteps,
             "learning_rate": self.learning_rate,
+            "seed": self.seed,
             "snapshot_interval": self.snapshot_interval,
         }
 
