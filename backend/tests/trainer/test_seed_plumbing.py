@@ -1,4 +1,7 @@
+import inspect
+
 from trainer.config import ModelConfig
+from trainer.training import trainer as trainer_mod
 
 
 def test_model_config_seed_default_is_none():
@@ -19,11 +22,6 @@ def test_model_config_seed_omitted_in_legacy_dict():
     legacy = {"name": "t", "symbols": ["BTCUSDT"], "intervals": ["4h"]}
     restored = ModelConfig.from_dict(legacy)
     assert restored.seed is None
-
-
-import inspect
-
-from trainer.training import trainer as trainer_mod
 
 
 def test_train_model_passes_seed_to_algo_constructor():
