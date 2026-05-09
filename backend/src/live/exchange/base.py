@@ -19,6 +19,10 @@ class Kline:
     low: float
     close: float
     volume: float
+    quote_volume: float | None = None
+    num_trades: int | None = None
+    taker_buy_base_vol: float | None = None
+    taker_buy_quote_vol: float | None = None
 
 
 @dataclass(frozen=True)

@@ -28,15 +28,35 @@ def klines_to_features(
 ) -> np.ndarray:
     """Project Kline DTOs into a (N, len(columns)) float32 array.
 
-    `columns` is the same list the trainer used (e.g. ['open','high','low','close','volume']).
+    `columns` is the list the trainer used. The 9 supported columns
+    correspond 1:1 to the trainer's ALL_KLINE_COLUMNS in trainer.config.
     """
     name_to_attr = {
-        "open": "open", "high": "high", "low": "low",
-        "close": "close", "volume": "volume",
+        "open": "open",
+        "high": "high",
+        "low": "low",
+        "close": "close",
+        "volume": "volume",
+        "quote_volume": "quote_volume",
+        "num_trades": "num_trades",
+        "taker_buy_base_vol": "taker_buy_base_vol",
+        "taker_buy_quote_vol": "taker_buy_quote_vol",
     }
     rows: list[list[float]] = []
     for k in klines:
-        rows.append([getattr(k, name_to_attr[c]) for c in columns])
+        row: list[float] = []
+        for c in columns:
+            attr = name_to_attr.get(c)
+            if attr is None:
+                raise KeyError(f"unsupported kline column: {c!r}")
+            val = getattr(k, attr)
+            if val is None:
+                raise ValueError(
+                    f"kline at {k.open_time_ms} missing required column {c!r}; "
+                    f"adapter must populate this field for models that use it"
+                )
+            row.append(float(val))
+        rows.append(row)
     return np.array(rows, dtype=np.float32)
 
 

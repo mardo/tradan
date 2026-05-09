@@ -98,6 +98,10 @@ class ReplayAdapter(ExchangeAdapter):
                 low=float(row[st.price_columns["low"]]),
                 close=float(row[st.price_columns["close"]]),
                 volume=float(row[st.price_columns["volume"]]),
+                quote_volume=_lookup_optional(row, st.price_columns, "quote_volume"),
+                num_trades=_lookup_optional_int(row, st.price_columns, "num_trades"),
+                taker_buy_base_vol=_lookup_optional(row, st.price_columns, "taker_buy_base_vol"),
+                taker_buy_quote_vol=_lookup_optional(row, st.price_columns, "taker_buy_quote_vol"),
             ))
         return out
 
@@ -166,3 +170,17 @@ class ReplayAdapter(ExchangeAdapter):
         if idx < 0 or idx >= len(st.features):
             return 1.0
         return float(st.features[idx][st.price_columns["close"]])
+
+
+def _lookup_optional(row, price_columns: dict[str, int], key: str) -> float | None:
+    idx = price_columns.get(key)
+    if idx is None:
+        return None
+    return float(row[idx])
+
+
+def _lookup_optional_int(row, price_columns: dict[str, int], key: str) -> int | None:
+    idx = price_columns.get(key)
+    if idx is None:
+        return None
+    return int(row[idx])
