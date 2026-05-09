@@ -1,0 +1,23 @@
+# Pick 1 — btc_4h_a2c_lb500_3em4_p2_s1
+exchange:
+  name: bingx
+  mode: demo
+  api_key_env: BINGX_VST_S1_API_KEY
+  api_secret_env: BINGX_VST_S1_API_SECRET
+
+market:
+  symbol: BTC/USDT:USDT          # ccxt unified symbol for BTCUSDT perp
+  interval: 4h
+
+model:
+  name: btc_4h_a2c_lb500_3em4_p2_s1
+
+risk:
+  starting_equity_quote: 10000
+  max_drawdown_pct: 0.20
+  max_position_size_pct: 0.50
+  max_leverage: 3
+  kill_switch_env: TRADAN_KILL_SWITCH_S1
+
+logging:
+  pnl_snapshot_interval_minutes: 60
