@@ -172,6 +172,7 @@ def run_live(*, config_path: str, dry_run: bool = False) -> int:
     )
 
     conn = connect()
+    conn.autocommit = True
     try:
         model_id, model_cfg = _load_model_cfg(conn, cfg.model.name)
         models_dir = Path(os.environ.get("MODELS_DIR", "/var/lib/tradan/models"))
