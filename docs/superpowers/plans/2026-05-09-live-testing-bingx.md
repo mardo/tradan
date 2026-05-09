@@ -44,7 +44,6 @@ backend/configs/live/live-s1.yaml
 backend/configs/live/live-s2.yaml
 backend/configs/live/live-s3.yaml
 
-backend/tests/conftest.py
 backend/tests/trainer/env/test_action_decoder.py
 backend/tests/trainer/env/test_observation.py
 backend/tests/trainer/env/test_apply_intent.py
@@ -117,33 +116,16 @@ git commit -m "docs: investigate trainer normalization parity bug"
 - Create: `backend/tests/conftest.py`
 - Create: `backend/tests/trainer/env/test_normalization.py`
 
-- [ ] **Step 1: Scaffold pytest layout**
+- [ ] **Step 1: Add new test subdirs (existing layout already works)**
+
+`backend/tests/` already exists with 46 passing tests under `tests/trainer/`. The project is installed via `uv sync`, so `from trainer....` imports resolve through the installed package — no conftest is needed for path setup. Only create the new subdirs:
 
 ```bash
 mkdir -p backend/tests/trainer/env backend/tests/live
-touch backend/tests/__init__.py backend/tests/trainer/__init__.py \
-      backend/tests/trainer/env/__init__.py backend/tests/live/__init__.py
+touch backend/tests/trainer/env/__init__.py backend/tests/live/__init__.py
 ```
 
-Create `backend/tests/conftest.py`:
-
-```python
-"""Shared pytest fixtures.
-
-The backend uses uv. Run tests with `uv run pytest backend/tests`.
-"""
-from __future__ import annotations
-
-import sys
-from pathlib import Path
-
-# Ensure src/ is on sys.path so `import trainer`, `import live`, etc. resolve
-# without installing the package. Mirrors the layout uv uses.
-ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
-```
+(`tests/__init__.py` and `tests/trainer/__init__.py` already exist; do not overwrite them.) Skip creating `tests/conftest.py` — the existing test files (`tests/trainer/test_account.py` etc.) already work without one.
 
 - [ ] **Step 2: Write the failing test**
 
