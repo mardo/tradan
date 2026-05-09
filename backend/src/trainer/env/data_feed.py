@@ -5,6 +5,7 @@ import pandas as pd
 import psycopg
 
 from trainer.config import ModelConfig
+from trainer.env.normalization import NormalizationStats, fit_stats
 
 
 class DataFeed:
@@ -14,15 +15,16 @@ class DataFeed:
         features: np.ndarray,
         lookback: int = 500,
         price_columns: dict[str, int] | None = None,
+        stats: NormalizationStats | None = None,
     ) -> None:
         self.timestamps = timestamps
         self.raw_features = features.astype(np.float32)
         self.lookback = lookback
         self.price_columns = price_columns or {}
 
-        self._mean = self.raw_features.mean(axis=0)
-        self._std = self.raw_features.std(axis=0)
-        self._std[self._std < 1e-8] = 1.0
+        if stats is None:
+            stats = fit_stats(self.raw_features)
+        self.stats = stats
 
     @property
     def total_steps(self) -> int:
@@ -36,7 +38,7 @@ class DataFeed:
         start = step
         end = step + self.lookback
         window = self.raw_features[start:end]
-        return ((window - self._mean) / self._std).astype(np.float32)
+        return ((window - self.stats.mean) / self.stats.std).astype(np.float32)
 
     def get_raw_observation(self, step: int) -> np.ndarray:
         start = step
@@ -56,7 +58,11 @@ class DataFeed:
         return int(self.timestamps[step + self.lookback])
 
 
-def load_data_feed(config: ModelConfig, conn: psycopg.Connection) -> DataFeed:
+def load_data_feed(
+    config: ModelConfig,
+    conn: psycopg.Connection,
+    stats: NormalizationStats | None = None,
+) -> DataFeed:
     primary_interval = config.intervals[0]
 
     dfs: list[pd.DataFrame] = []
@@ -99,4 +105,5 @@ def load_data_feed(config: ModelConfig, conn: psycopg.Connection) -> DataFeed:
         features=features,
         lookback=config.lookback_window,
         price_columns=price_columns,
+        stats=stats,
     )
