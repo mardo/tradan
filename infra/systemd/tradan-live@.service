@@ -1,0 +1,18 @@
+[Unit]
+Description=Tradan live runner (%i)
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=/etc/tradan/live-%i.env
+WorkingDirectory=/opt/tradan/backend
+ExecStart=/root/.local/bin/uv run live-test run --config configs/live/live-%i.yaml
+Restart=always
+RestartSec=10
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target
