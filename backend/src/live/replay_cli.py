@@ -23,7 +23,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -84,6 +84,8 @@ def _load_kline_window(
     conn, *, symbol: str, interval: str,
     start: datetime, end: datetime, columns: list[str],
 ):
+    start_ms = int(start.replace(tzinfo=timezone.utc).timestamp() * 1000)
+    end_ms = int(end.replace(tzinfo=timezone.utc).timestamp() * 1000)
     rows = conn.execute(
         f"""
         SELECT open_time, {", ".join(columns)} FROM klines
@@ -91,7 +93,7 @@ def _load_kline_window(
               AND open_time >= %s AND open_time < %s
         ORDER BY open_time
         """,
-        (symbol, interval, start, end),
+        (symbol, interval, start_ms, end_ms),
     ).fetchall()
     if not rows:
         raise SystemExit("empty kline window — check --start/--end vs DB contents")
