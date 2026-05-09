@@ -98,9 +98,11 @@ class ModelConfig:
     # Neural network learning rate. Controls how much weights update per gradient step.
     # Lower = more stable but slower convergence. Higher = faster but risk of instability.
     learning_rate: float = 3e-4
-    # Optional integer seed for reproducibility. Forwarded to SB3 algo and to env.reset.
-    # None means non-deterministic (matches pre-Phase-4A behavior). Set explicitly for
-    # seed-variance studies where reruns must match.
+    # Optional integer seed. Forwarded to the SB3 algorithm constructor, which seeds
+    # Python/NumPy/Torch globals and the env SB3 owns. None preserves prior
+    # non-deterministic behavior. Same-seed reruns on GPU are statistically very close
+    # but not bit-identical (CUDA non-determinism is not disabled here); the field still
+    # gives a useful handle for seed-variance studies.
     seed: int | None = None
 
     # How often (in env steps) to record a PnL snapshot to the database for tracking performance.

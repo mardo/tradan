@@ -31,14 +31,17 @@ EXPECTED_P4A_SEEDS = 5
 
 
 def fetch_holdout_pnls(conn, name_pattern: str) -> list[float]:
+    # DISTINCT ON dedupes when a model has been re-evaluated (multiple completed
+    # eval runs); keep the latest by training_runs.id so the decision matrix isn't
+    # skewed by stale evals from before a bug fix or re-run.
     rows = conn.execute(
         """
-        SELECT tr_eval.total_pnl
+        SELECT DISTINCT ON (mc.name) tr_eval.total_pnl
         FROM model_configs mc
         JOIN training_runs tr_eval ON tr_eval.model_config_id = mc.id
             AND tr_eval.run_type = 'evaluate' AND tr_eval.status = 'completed'
         WHERE mc.name LIKE %s
-        ORDER BY mc.name
+        ORDER BY mc.name, tr_eval.id DESC
         """,
         (name_pattern,),
     ).fetchall()
