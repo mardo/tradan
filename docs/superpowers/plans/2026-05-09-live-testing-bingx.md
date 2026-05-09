@@ -75,6 +75,23 @@ backend/src/trainer/training/trainer.py      # save normalization stats alongsid
 
 The trainer's `_build_observation` and `_process_actions` move into pure modules. Both `TradingEnv.step` and `live/runner` will call the same code. Before any `live/` code is written, this phase must pass Gate A1 (before/after eval bit-identical regression).
 
+### Execution order (revised after Task A.1 findings)
+
+Task A.1's investigation confirmed that `evaluator.py` already passes the **holdout (last 20%)** slice to `DataFeed`, which fits its own normalization stats. The historical `training_runs.final_balance` values were therefore measured under eval-time normalization. Two consequences for sequencing:
+
+1. **The refactor (A.5–A.8) must NOT change normalization behavior.** It is a pure code-organization change. Gate A.9 then validates "saved-model eval still matches `training_runs.final_balance`".
+2. **The normalization persistence work (A.2–A.4) is an explicit behavior change** that comes after Gate A.9. After it lands, eval results legitimately differ from `training_runs.final_balance`. A new step (Task A.10) captures the new baselines for use by Gate C.8 in the replay phase.
+
+Execute Phase A in this order:
+
+```
+A.1  → A.5 → A.6 → A.7 → A.8 → A.9 (parity vs historical)
+                                  → A.2 → A.3 → A.4 (normalization fix; behavior change)
+                                                    → A.10 (NEW: capture new eval baselines for C.8)
+```
+
+Tasks A.2, A.3, A.4 below stay where they are in this document for readability; ignore their position relative to A.5–A.9 and follow the order above.
+
 ### Task A.1: Investigate normalization state and write parity-bug fix design
 
 **Files:**
@@ -1312,6 +1329,46 @@ git commit -m "test(trainer): regression gate for refactor parity"
 ```bash
 git rm docs/superpowers/notes/normalization-parity.md
 git commit -m "chore: remove transitional research notes"
+```
+
+### Task A.10: Capture new eval baselines (after A.4 normalization fix)
+
+**Files:**
+- Create: `backend/tests/fixtures/replay_baselines.json`
+
+After Tasks A.2–A.4 land the normalization persistence fix, eval results legitimately differ from `training_runs.final_balance` (they now use train-time stats instead of eval-time stats). This task captures the new ground-truth values that Gate C.8 will use as the replay-gate baseline.
+
+- [ ] **Step 1: Re-evaluate each pick with persisted train-time stats**
+
+For Pick 1, Pick 2, Pick 3:
+
+```bash
+cd backend && uv run train evaluate --model <pick-name>
+```
+
+The evaluator now loads `mean.npy`/`std.npy` (per Task A.4) instead of fitting from the holdout slice. Capture the printed `final_balance` for each pick.
+
+- [ ] **Step 2: Persist baselines for the replay gate**
+
+Write `backend/tests/fixtures/replay_baselines.json`:
+
+```json
+{
+  "btc_4h_a2c_lb500_3em4_p2_s1": {"final_balance": <captured>, "captured_at": "<ISO date>"},
+  "btc_4h_a2c_lb100_3em4_p2_s0": {"final_balance": <captured>, "captured_at": "<ISO date>"},
+  "btc_4h_a2c_lb500_3em4_p2_s0": {"final_balance": <captured>, "captured_at": "<ISO date>"}
+}
+```
+
+- [ ] **Step 3: Update Gate C.8 plan steps**
+
+Gate C.8 reads `final_balance` from this JSON instead of `training_runs.final_balance`. Update `live_replay.py`'s `expected_terminal_equity` to prefer the JSON when running against post-A.4 code (and fall back to DB for older eval runs).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add backend/tests/fixtures/replay_baselines.json
+git commit -m "test(live): capture replay-gate baselines after normalization fix"
 ```
 
 **Phase A complete.** `live/` work begins next, building on top of stable extracted modules.
