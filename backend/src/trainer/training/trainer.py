@@ -24,6 +24,7 @@ from trainer.db import (
     save_pnl_snapshots,
 )
 from trainer.env.data_feed import DataFeed, load_data_feed
+from trainer.env.normalization import save_stats
 from trainer.env.trading_env import TradingEnv
 
 ALGO_MAP = {
@@ -304,6 +305,9 @@ def train_model(
 
         model_path = str(model_dir / "model.zip")
         model.save(model_path)
+
+        # Persist train-time normalization so eval and live use the same stats.
+        save_stats(train_feed.stats, model_dir / "model")
 
         metrics = compute_metrics(env)
         complete_training_run(run_id, model_path=model_path, **metrics)
