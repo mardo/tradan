@@ -32,7 +32,7 @@ def conn_tx():
 def model_config_id(conn_tx):
     row = conn_tx.execute(
         """
-        INSERT INTO model_configs (name, config)
+        INSERT INTO model_configs (name, config_json)
         VALUES ('test_live', '{}'::jsonb)
         RETURNING id
         """

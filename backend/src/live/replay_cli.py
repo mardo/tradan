@@ -52,7 +52,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def _load_model_config(conn, name: str) -> tuple[int, ModelConfig]:
     row = conn.execute(
-        "SELECT id, config FROM model_configs WHERE name = %s", (name,),
+        "SELECT id, config_json FROM model_configs WHERE name = %s", (name,),
     ).fetchone()
     if row is None:
         raise SystemExit(f"model {name!r} not found in model_configs")

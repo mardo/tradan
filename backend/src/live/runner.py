@@ -593,7 +593,7 @@ def _approx_leverage(open_intent: OpenIntent, ctx: _LiveContext) -> float:
 
 def _load_model_cfg(conn: psycopg.Connection, name: str) -> tuple[int, ModelConfig]:
     row = conn.execute(
-        "SELECT id, config FROM model_configs WHERE name = %s", (name,),
+        "SELECT id, config_json FROM model_configs WHERE name = %s", (name,),
     ).fetchone()
     if row is None:
         raise ValueError(f"model {name!r} not found in model_configs")
