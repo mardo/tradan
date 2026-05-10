@@ -97,14 +97,16 @@ def build_live_observation(
 
 
 def _to_sim_order(o: LiveOrder) -> SimOrder:
-    """Best-effort projection: live Order DTO has fewer fields than SimOrder."""
+    """Best-effort projection: live Order DTO → trainer's SimOrder.
+    Uses the new optional SL/TP fields when the adapter populates them
+    (ReplayAdapter does; live BingX adapter will once D.1/E.1 land)."""
     return SimOrder(
         id=int(o.id) if o.id.isdigit() else 0,
         direction=1 if o.side == "buy" else -1,
         trigger_price=o.price or 0.0,
-        sl_price=o.price or 0.0,
-        tp_prices=[],
-        tp_size_pcts=[],
+        sl_price=o.stop_loss if o.stop_loss is not None else (o.price or 0.0),
+        tp_prices=list(o.take_profit_prices) if o.take_profit_prices else [],
+        tp_size_pcts=list(o.take_profit_size_pcts) if o.take_profit_size_pcts else [],
         margin=o.amount,
     )
 

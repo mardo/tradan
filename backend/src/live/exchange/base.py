@@ -56,6 +56,9 @@ class Order:
     status: Literal["open", "filled", "cancelled", "rejected"]
     fill_price: float | None = None
     fill_amount: float | None = None
+    stop_loss: float | None = None
+    take_profit_prices: list[float] | None = None
+    take_profit_size_pcts: list[float] | None = None
 
 
 @dataclass(frozen=True)

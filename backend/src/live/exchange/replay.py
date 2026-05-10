@@ -135,6 +135,9 @@ class ReplayAdapter(ExchangeAdapter):
                 side="buy" if o.direction == 1 else "sell",
                 type="limit", price=o.trigger_price, amount=o.margin,
                 status="open",
+                stop_loss=o.sl_price,
+                take_profit_prices=list(o.tp_prices),
+                take_profit_size_pcts=list(o.tp_size_pcts),
             ))
         return out
 
