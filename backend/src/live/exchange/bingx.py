@@ -67,6 +67,13 @@ class BingXAdapter(ExchangeAdapter):
     # -- read methods -------------------------------------------------------
 
     def fetch_klines(self, symbol: str, interval: str, limit: int) -> list[Kline]:
+        # BingX's unified fetch_ohlcv only returns OHLCV (timestamp + 5 fields).
+        # The trainer's picks were trained on 9 columns (Binance archive). The
+        # 4 extras (quote_volume, num_trades, taker_buy_base_vol, taker_buy_quote_vol)
+        # are populated as 0.0 here so feature_pipeline does not raise. The model
+        # will see zeros in those slots, which is a known divergence from replay
+        # (which uses real Binance values from the klines table). The 4-week paper
+        # test on BingX VST is what surfaces whether this matters in practice.
         rows = self._client.fetch_ohlcv(symbol, interval, limit=limit)
         return [
             Kline(
@@ -76,11 +83,10 @@ class BingXAdapter(ExchangeAdapter):
                 low=float(r[3]),
                 close=float(r[4]),
                 volume=float(r[5]),
-                # BingX's unified fetch_ohlcv only returns OHLCV. The
-                # extended fields (quote_volume, num_trades, etc.) would
-                # require a non-unified API call. For the picks (which use
-                # all 9 columns), feature_pipeline will raise a clear error
-                # if the model needs the extended fields and they are None.
+                quote_volume=0.0,
+                num_trades=0,
+                taker_buy_base_vol=0.0,
+                taker_buy_quote_vol=0.0,
             )
             for r in rows
         ]
