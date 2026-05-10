@@ -7,7 +7,7 @@ Type=simple
 Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=/etc/tradan/live-%i.env
 WorkingDirectory=/opt/tradan/backend
-ExecStart=/root/.local/bin/uv run live-test run --config configs/live/live-%i.yaml
+ExecStart=/opt/tradan/backend/.venv/bin/python3 -m live.cli run --config configs/live/live-%i.yaml
 Restart=always
 RestartSec=10
 KillMode=mixed
