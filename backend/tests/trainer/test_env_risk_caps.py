@@ -192,3 +192,29 @@ def test_peak_equity_is_trailing(minimal_env: TradingEnv):
     # Peak must not retreat.
     assert env._peak_equity == pytest.approx(20_000.0)
     assert env._peak_equity > initial_peak
+
+
+# ---------- Idle-step penalty (Phase 4E) ------------------------------------
+
+
+def test_exchange_config_default_idle_step_penalty_is_zero():
+    """The penalty defaults to 0 so existing configs (4A/4C/4D) are unaffected.
+    Phase 4E sweeps opt in by setting it to a positive value."""
+    cfg = ExchangeConfig()
+    assert cfg.idle_step_penalty_usd == 0.0
+
+
+def test_exchange_config_idle_step_penalty_round_trip():
+    cfg = ExchangeConfig(idle_step_penalty_usd=0.5)
+    d = cfg.to_dict()
+    assert d["idle_step_penalty_usd"] == 0.5
+    restored = ExchangeConfig.from_dict(d)
+    assert restored.idle_step_penalty_usd == 0.5
+
+
+def test_exchange_config_idle_step_penalty_omitted_in_legacy_dict():
+    """Old persisted ExchangeConfig JSON predating this field must round-trip
+    without crashing (from_dict already filters by __dataclass_fields__)."""
+    legacy = {"max_leverage": 10.0}
+    restored = ExchangeConfig.from_dict(legacy)
+    assert restored.idle_step_penalty_usd == 0.0

@@ -44,6 +44,13 @@ class ExchangeConfig:
     # equity <= 0, giving the policy no early signal that a strategy was failing.
     # Enforced in TradingEnv.step() against a peak_equity tracker.
     max_drawdown_pct: float = 0.5
+    # Per-step penalty (USD) subtracted from the Δ-equity reward when the env
+    # is idle — no open positions and no live orders. Default 0 preserves the
+    # baseline reward exactly. Phase 4E uses positive values (e.g. 0.05, 0.5)
+    # to discourage policy collapse to "do nothing", which has been the
+    # recurring lb100 failure mode (entropy decay → flat reward between idle
+    # and small-loss states). Enforced in TradingEnv.step().
+    idle_step_penalty_usd: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -58,6 +65,7 @@ class ExchangeConfig:
             "min_order_size_usd": self.min_order_size_usd,
             "max_position_size_pct": self.max_position_size_pct,
             "max_drawdown_pct": self.max_drawdown_pct,
+            "idle_step_penalty_usd": self.idle_step_penalty_usd,
         }
 
     @classmethod
