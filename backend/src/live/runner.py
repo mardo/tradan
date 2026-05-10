@@ -315,8 +315,13 @@ def _loop(ctx: _LiveContext) -> int:
 
             time.sleep(_POLL_SECONDS)
 
-    except _GracefulExit as e:
-        _shutdown(ctx, reason=e.reason)
+    except _GracefulExit:
+        # SIGTERM/SIGINT means the operator wants the *process* to exit
+        # (typically via systemctl restart or a deploy). It does NOT mean
+        # the *run* should be terminated — positions stay at the exchange,
+        # the live_runs row stays in 'running' state, and the next start
+        # picks up where we left off via reconciliation. Permanent
+        # termination uses live-test stop / kill switch / drawdown / error.
         return 0
     except Exception as e:
         log_action(
