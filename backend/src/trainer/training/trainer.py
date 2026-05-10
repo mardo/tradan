@@ -295,6 +295,7 @@ def train_model(
             "MultiInputPolicy",
             env,
             learning_rate=config.learning_rate,
+            seed=config.seed,
             verbose=0,
         )
         model.learn(
