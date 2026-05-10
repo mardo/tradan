@@ -14,8 +14,12 @@ class ExchangeConfig:
     # Fixed dollar fee added on top of percentage fee per trade.
     flat_fee_usd: float = 0.0
 
-    # Absolute maximum leverage the exchange allows (e.g. 125x on Binance futures).
-    max_leverage: float = 125.0
+    # Absolute maximum leverage. Lowered from 125 to 10 in the Phase 4 env audit
+    # (docs/plans/2026-05-10-phase4-env-audit-design.md) — tight-SL gaming auto-leveraged
+    # policies to ~100x and was the proximate cause of >100% holdout drawdowns.
+    # Saved configs from before the audit retain their old (125) default via the
+    # JSON snapshot in model_configs.config_json.
+    max_leverage: float = 10.0
     # Safety margin between the SL price and the liquidation price, as % of entry price.
     # Ensures the SL triggers before liquidation even with slippage.
     liquidation_buffer_pct: float = 0.5
