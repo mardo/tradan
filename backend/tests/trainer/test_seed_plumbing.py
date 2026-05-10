@@ -152,6 +152,62 @@ def test_phase4d_env_audit_builder_produces_15_configs():
         assert c.ent_coef == 0.0
 
 
+def test_phase4e_idle_penalty_builder_produces_30_configs():
+    import importlib.util
+    import pathlib
+
+    backend_root = pathlib.Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location(
+        "sweep_phase4e_idle_penalty",
+        backend_root / "scripts" / "sweep_phase4e_idle_penalty.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    configs = mod.build_phase4e_configs()
+    # 3 architectures × 2 penalty values × 5 seeds.
+    assert len(configs) == 30
+
+    # Slug rule: 0.05 -> "idle05", 0.5 -> "idle5".
+    expected_names = sorted(
+        f"btc_4h_a2c_lb{lb}_3em4_{slug}_p4e_s{s}"
+        for lb in (100, 250, 500)
+        for slug in ("idle05", "idle5")
+        for s in range(5)
+    )
+    assert sorted(c.name for c in configs) == expected_names
+
+    # Each config carries the env audit defaults from Phase 4D.
+    for c in configs:
+        assert c.exchange.max_leverage == 10.0
+        assert c.exchange.max_position_size_pct == 0.25
+        assert c.exchange.max_drawdown_pct == 0.5
+        assert c.intervals == ["4h"]
+        assert c.algorithm == "A2C"
+        assert c.learning_rate == 3e-4
+        assert c.total_timesteps == 1_000_000
+        # ent_coef stays at default (0.0) — 4E tests idle-penalty effect alone.
+        assert c.ent_coef == 0.0
+
+    # Penalty value is encoded in the slug AND on the ExchangeConfig.
+    for c in configs:
+        if "idle05" in c.name:
+            assert c.exchange.idle_step_penalty_usd == 0.05
+        elif "idle5" in c.name:
+            assert c.exchange.idle_step_penalty_usd == 0.5
+        else:
+            raise AssertionError(f"unexpected slug in {c.name}")
+
+    # Seeds match 4A/4D for paired comparison; one seed per slot per (arch, slug).
+    expected_seeds = {1001, 2002, 3003, 4004, 5005}
+    seeds_by_cell: dict[tuple[int, str], set[int]] = {}
+    for c in configs:
+        slug = "idle05" if "idle05" in c.name else "idle5"
+        seeds_by_cell.setdefault((c.lookback_window, slug), set()).add(c.seed)
+    for (lb, slug), seeds in seeds_by_cell.items():
+        assert seeds == expected_seeds, f"({lb},{slug}) seeds: {seeds}"
+
+
 def test_phase4c_entropy_builder_produces_5_configs():
     import importlib.util
     import pathlib
