@@ -104,6 +104,12 @@ class ModelConfig:
     # but not bit-identical (CUDA non-determinism is not disabled here); the field still
     # gives a useful handle for seed-variance studies.
     seed: int | None = None
+    # Coefficient on the entropy bonus added to the policy-gradient loss. SB3's
+    # default is 0.0 for A2C/PPO and 'auto' (a learnable schedule) for SAC; this
+    # field is conditionally forwarded by train_model only when > 0, so the
+    # default 0.0 preserves SB3 defaults across all algorithms. Set positive
+    # (e.g. 0.01) to prevent A2C entropy collapse — see Phase 4C study.
+    ent_coef: float = 0.0
 
     # How often (in env steps) to record a PnL snapshot to the database for tracking performance.
     snapshot_interval: int = 100
@@ -126,6 +132,7 @@ class ModelConfig:
             "total_timesteps": self.total_timesteps,
             "learning_rate": self.learning_rate,
             "seed": self.seed,
+            "ent_coef": self.ent_coef,
             "snapshot_interval": self.snapshot_interval,
         }
 

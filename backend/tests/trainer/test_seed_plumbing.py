@@ -24,6 +24,19 @@ def test_model_config_seed_omitted_in_legacy_dict():
     assert restored.seed is None
 
 
+def test_model_config_ent_coef_default_is_zero():
+    cfg = ModelConfig(name="t", symbols=["BTCUSDT"], intervals=["4h"])
+    assert cfg.ent_coef == 0.0
+
+
+def test_model_config_ent_coef_round_trip():
+    cfg = ModelConfig(name="t", symbols=["BTCUSDT"], intervals=["4h"], ent_coef=0.01)
+    d = cfg.to_dict()
+    assert d["ent_coef"] == 0.01
+    restored = ModelConfig.from_dict(d)
+    assert restored.ent_coef == 0.01
+
+
 def test_train_model_passes_seed_to_algo_constructor():
     """train_model must forward config.seed to algo_cls(...).
 
