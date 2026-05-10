@@ -83,3 +83,18 @@ def test_resume_when_logged_position_no_longer_at_exchange():
         exchange_orders=[],
     )
     assert outcome.action == "resume"
+
+
+def test_resume_when_known_order_id_provided():
+    """An exchange order absent from last_logged_account_state but present
+    in known_order_ids (e.g. because the runner placed it post-snapshot) is
+    NOT considered unknown."""
+    last_logged = _state(positions=[], open_orders=[])
+    outcome = reconcile(
+        last_logged_account_state=last_logged,
+        exchange_balance=Balance(10_000.0, 9_500.0, 500.0),
+        exchange_positions=[],
+        exchange_orders=[_order(id="O-PLACED-POST-SNAPSHOT")],
+        known_order_ids={"O-PLACED-POST-SNAPSHOT"},
+    )
+    assert outcome.action == "resume"

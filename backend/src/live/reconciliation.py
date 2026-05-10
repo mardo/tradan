@@ -27,6 +27,7 @@ def reconcile(
     exchange_balance: Balance,
     exchange_positions: list[Position],
     exchange_orders: list[Order],
+    known_order_ids: set[str] | None = None,
 ) -> ReconciliationOutcome:
     logged_position_ids = {
         p["id"] for p in (last_logged_account_state.get("positions") or [])
@@ -34,12 +35,14 @@ def reconcile(
     logged_order_ids = {
         o["id"] for o in (last_logged_account_state.get("open_orders") or [])
     }
+    known_order_ids = known_order_ids or set()
+    all_known_orders = logged_order_ids | known_order_ids
 
     unknown_positions = [
         p for p in exchange_positions if p.id not in logged_position_ids
     ]
     unknown_orders = [
-        o for o in exchange_orders if o.id not in logged_order_ids
+        o for o in exchange_orders if o.id not in all_known_orders
     ]
 
     if unknown_positions or unknown_orders:

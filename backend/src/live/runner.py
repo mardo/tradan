@@ -513,6 +513,16 @@ def _do_reconciliation(
         (run_id,),
     ).fetchone()
     last_state: dict[str, Any] = last[0] if last else {}
+
+    known_orders = conn.execute(
+        """
+        SELECT exchange_order_id FROM live_orders
+        WHERE live_run_id = %s AND status = 'open'
+        """,
+        (run_id,),
+    ).fetchall()
+    known_order_ids = {r[0] for r in known_orders}
+
     bal = adapter.fetch_balance()
     positions = adapter.fetch_positions(symbol)
     open_orders = adapter.fetch_open_orders(symbol)
@@ -521,6 +531,7 @@ def _do_reconciliation(
         exchange_balance=bal,
         exchange_positions=positions,
         exchange_orders=open_orders,
+        known_order_ids=known_order_ids,
     )
     log_action(
         conn, live_run_id=run_id, event_type="reconciliation",
