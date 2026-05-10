@@ -134,12 +134,61 @@ def test_exchange_config_default_max_position_size_pct_is_quarter():
 
 
 # ---------- Fix 3: max_drawdown_pct -----------------------------------------
-#
-# Implemented in trading_env.step(): trailing peak_equity tracked; episode
-# terminates when equity drops below peak * (1 - max_drawdown_pct).
 
 
-# ---------- Fix 3: max_drawdown_pct -----------------------------------------
-#
-# Implemented in trading_env.step(): trailing peak_equity tracked; episode
-# terminates when equity drops below peak * (1 - max_drawdown_pct).
+def test_exchange_config_default_max_drawdown_pct_is_half():
+    cfg = ExchangeConfig()
+    assert cfg.max_drawdown_pct == 0.5
+
+
+def test_step_terminates_when_equity_drops_below_drawdown_threshold(
+    minimal_env: TradingEnv,
+):
+    """If equity falls to peak * (1 - max_drawdown_pct), the env must
+    terminate the episode. This gives the policy a sharp negative signal
+    well before the account hits zero."""
+    env = minimal_env
+    assert env.config.exchange.max_drawdown_pct == 0.5
+    env.reset()
+    # Set the peak high so the threshold is unambiguous.
+    env._peak_equity = 10_000.0
+    # Drain account directly to simulate a large loss.
+    env.account.balance = 4_999.0  # equity will be 4999, below threshold 5000
+    no_op = np.zeros(env.config.action_size, dtype=np.float32)
+    no_op[0] = -1.0  # open_conf < 0.5 so no order placed
+    _, _, terminated, _, _ = env.step(no_op)
+    assert terminated is True
+
+
+def test_step_does_not_terminate_just_above_drawdown_threshold(
+    minimal_env: TradingEnv,
+):
+    """Equity exactly at the threshold should not yet terminate."""
+    env = minimal_env
+    env.reset()
+    env._peak_equity = 10_000.0
+    env.account.balance = 5_001.0  # just above 50% drawdown
+    no_op = np.zeros(env.config.action_size, dtype=np.float32)
+    no_op[0] = -1.0
+    _, _, terminated, _, _ = env.step(no_op)
+    assert terminated is False
+
+
+def test_peak_equity_is_trailing(minimal_env: TradingEnv):
+    """peak_equity must rise with new highs but never fall, so the threshold
+    is a TRAILING drawdown rather than initial-balance-based."""
+    env = minimal_env
+    env.reset()
+    initial_peak = env._peak_equity
+    # Simulate the account growing.
+    env.account.balance = 20_000.0
+    no_op = np.zeros(env.config.action_size, dtype=np.float32)
+    no_op[0] = -1.0
+    env.step(no_op)
+    assert env._peak_equity == pytest.approx(20_000.0)
+    # Then shrinking (but not enough to cross the new threshold of 10_000).
+    env.account.balance = 11_000.0
+    env.step(no_op)
+    # Peak must not retreat.
+    assert env._peak_equity == pytest.approx(20_000.0)
+    assert env._peak_equity > initial_peak

@@ -53,6 +53,8 @@ class TradingEnv(gym.Env):
 
         self._current_step = 0
         self._prev_equity = config.initial_balance
+        # Trailing peak equity for drawdown-based early termination (Phase 4 audit Fix 3).
+        self._peak_equity = config.initial_balance
         self.pnl_history: list[dict] = []
 
     def reset(
@@ -61,6 +63,7 @@ class TradingEnv(gym.Env):
         super().reset(seed=seed)
         self._current_step = 0
         self._prev_equity = self.config.initial_balance
+        self._peak_equity = self.config.initial_balance
         self.exchange.reset()
         self.pnl_history.clear()
         return self._build_observation(), {}
@@ -90,6 +93,13 @@ class TradingEnv(gym.Env):
         reward = float(equity - self._prev_equity)
         self._prev_equity = equity
 
+        # Phase 4 audit Fix 3: track trailing peak equity and terminate the
+        # episode when drawdown crosses max_drawdown_pct. Gives the policy a
+        # sharper "this is failing" signal than waiting until equity hits zero.
+        if equity > self._peak_equity:
+            self._peak_equity = equity
+        drawdown_threshold = self._peak_equity * (1.0 - self.config.exchange.max_drawdown_pct)
+
         self.pnl_history.append({
             "step": self._current_step,
             "candle_time": self.data_feed.get_timestamp(self._current_step),
@@ -100,7 +110,7 @@ class TradingEnv(gym.Env):
             "open_order_count": len(self.exchange.open_orders),
         })
 
-        terminated = equity <= 0
+        terminated = equity <= 0 or equity < drawdown_threshold
         self._current_step += 1
         truncated = self._current_step >= self.data_feed.total_steps
 
