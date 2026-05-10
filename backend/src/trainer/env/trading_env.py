@@ -91,6 +91,11 @@ class TradingEnv(gym.Env):
         unrealized = self.exchange.total_unrealized_pnl(close)
         equity = self.account.equity(unrealized)
         reward = float(equity - self._prev_equity)
+        # Phase 4E: penalize idle steps (no live orders or positions). Default
+        # cap is 0.0 so this is a no-op for pre-4E configs.
+        idle_pen = self.config.exchange.idle_step_penalty_usd
+        if idle_pen > 0.0 and not self.exchange.open_positions and not self.exchange.open_orders:
+            reward -= idle_pen
         self._prev_equity = equity
 
         # Phase 4 audit Fix 3: track trailing peak equity and terminate the

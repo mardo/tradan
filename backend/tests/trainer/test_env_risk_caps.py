@@ -218,3 +218,56 @@ def test_exchange_config_idle_step_penalty_omitted_in_legacy_dict():
     legacy = {"max_leverage": 10.0}
     restored = ExchangeConfig.from_dict(legacy)
     assert restored.idle_step_penalty_usd == 0.0
+
+
+def test_idle_step_penalty_subtracted_when_no_positions_or_orders(
+    minimal_env: TradingEnv,
+):
+    """With penalty=1.0 and an empty book, step() must subtract 1.0 from the
+    reward computed as Δ equity. The penalty is additive on top of the existing
+    reward formula — never replaces it."""
+    env = minimal_env
+    env.config.exchange.idle_step_penalty_usd = 1.0
+    env.reset()
+    # No positions, no orders, no equity change: reward should be -1.0.
+    no_op = np.zeros(env.config.action_size, dtype=np.float32)
+    no_op[0] = -1.0  # open_conf < 0.5 → no order placed this step
+    _, reward, _, _, _ = env.step(no_op)
+    assert reward == pytest.approx(-1.0)
+
+
+def test_idle_step_penalty_not_applied_when_orders_open(
+    minimal_env: TradingEnv,
+):
+    """If the model has live orders (or positions), it is not idle and the
+    penalty must not fire. Place an order on step 1 so the exchange's order
+    book is non-empty; step 2 with a no-op must NOT subtract the penalty."""
+    env = minimal_env
+    env.config.exchange.idle_step_penalty_usd = 1.0
+    env.reset()
+    open_action = _make_open_action(env, size_raw=0.1)
+    env.step(open_action)
+    assert len(env.exchange.open_orders) >= 1, (
+        "expected an open order to be present so the next step is non-idle"
+    )
+    prev_equity = env._prev_equity
+    no_op = np.zeros(env.config.action_size, dtype=np.float32)
+    no_op[0] = -1.0
+    _, reward, _, _, _ = env.step(no_op)
+    expected = float(env._prev_equity - prev_equity)
+    assert reward == pytest.approx(expected)
+
+
+def test_idle_step_penalty_default_zero_does_not_change_reward(
+    minimal_env: TradingEnv,
+):
+    """Default idle_step_penalty_usd=0 must leave reward exactly equal to
+    Δ equity, even when the env is idle. Guards against accidentally enabling
+    the penalty for any non-4E sweep."""
+    env = minimal_env
+    assert env.config.exchange.idle_step_penalty_usd == 0.0
+    env.reset()
+    no_op = np.zeros(env.config.action_size, dtype=np.float32)
+    no_op[0] = -1.0
+    _, reward, _, _, _ = env.step(no_op)
+    assert reward == pytest.approx(0.0)
