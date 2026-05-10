@@ -162,6 +162,45 @@ Operational notes for future sweeps:
   - 3 seeds at lb500 + lr=3e-4 + ent_coef=0.01 (default is 0.0), 2M timesteps.
   - If this rescues longer training, it's strong evidence the failure was entropy collapse.
 
+**4C Outcome — A2C entropy regularization (executed 2026-05-10):**
+
+Implementation: see `docs/plans/2026-05-09-phase4c-entropy-design.md`. Added `ModelConfig.ent_coef` (default 0.0, conditionally forwarded to SB3 only when > 0 to preserve SAC's 'auto' default) and a sweep + summary script that reuses `phase4a_summary.evaluate_arch` so the pass/fail rule stays in one place.
+
+Scope: 5 seeds × `lb500 + lr=3e-4 + ent_coef=0.01`, 2M timesteps, paired with 4A's seed values (1001..5005) for direct per-seed comparison.
+
+Decision matrix:
+
+| arch          | seeds | pos | median PnL  | 4A median   | decision |
+|---------------|------:|----:|------------:|------------:|----------|
+| lb500_ent01   | 5     | 1   | -$2,442     | -$10,155    | **FAIL** |
+
+Per-seed paired delta (`4C – 4A`, both on the same seed):
+
+| seed | 4A holdout PnL | 4C holdout PnL | delta     |
+|-----:|---------------:|---------------:|----------:|
+| 1001 |       -$5,195 |        -$3,770 |   +$1,425 |
+| 2002 |      -$10,155 |        -$2,442 |   +$7,713 |
+| 3003 |      -$10,316 |          +$553 |  +$10,869 |
+| 4004 |      -$11,703 |        -$5,134 |   +$6,569 |
+| 5005 |       -$7,428 |          -$485 |   +$6,943 |
+| —    | —              | —              |           |
+| median delta |       |                |   +$6,943 |
+| seeds where 4C beat 4A |  5 of 5 |   |            |
+
+**Verdict: FAIL the gate, but the entropy hypothesis is partially confirmed.**
+
+The architecture still doesn't pass the seed-robustness gate (need median > 0 AND ≥3/5 positive; got median -$2,442 with 1/5 positive). However, every paired seed improved with entropy regularization — median delta +$6,943 — and one seed (3003) crossed into positive territory. The improvement is systematic, not noise.
+
+Two readings:
+1. **Entropy reg is helping, just not enough.** An `ent_coef` sweep at higher values (e.g. 0.05) or longer training (5M timesteps with `ent_coef=0.01`) might push the architecture over the line.
+2. **Entropy reg is necessary but not sufficient.** Even with consistent improvement, the holdout-positive bar is high. The remaining gap may be due to the env permitting >40% drawdowns (s0/s1/s3 all blew through 49–66% on holdout); an env/reward audit is the bigger lever.
+
+Failure-mode shift: 4A's lb500 produced active-but-losing policies (10–117 trades, mostly catastrophic drawdowns). 4C produced two distinct families: high-trade chaotic ones (s0: 791 trades, s3: 119 trades) and low-trade conservative ones (s4: 2 trades, s2: 38 trades). The conservative s2/s4 had the smallest drawdowns (4.8–8.8%) — the only seed to break even (s2 +$553) was in this family. Suggests entropy reg can produce both directions of behavior depending on seed.
+
+Operational note: env code drift between branches caused an apples-to-oranges hazard during this experiment. The training host had been switched to the user's `worktree-live-testing-bingx` branch (which has env-internal refactors not on `main`) between training and eval. The first eval pass on bingx-code produced visibly different trade counts (e.g. s1 holdout: 219 trades on bingx vs 29 on main with the same model). All numbers above are from the re-evaluation on `main`, which is the commit set under which training happened. Future cross-phase comparisons need a single env-code version pinned across train+eval.
+
+**Recommended next step:** env/reward audit (master plan's Path C). Two algorithmic levers (seeds, entropy reg) have now been pulled with diminishing returns; the >40% drawdowns on losing seeds suggest the env's leverage and stop-loss handling permits failure modes a real exchange wouldn't. A small `ent_coef` sweep (0.05) is a cheaper sanity check first if compute is free, but the env audit is where the next material gain likely comes from.
+
 ### 4D — Interval expansion
 **Goal:** establish whether 4h is genuinely best or just easiest.
 
