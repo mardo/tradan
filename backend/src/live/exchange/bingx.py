@@ -227,7 +227,15 @@ class BingXAdapter(ExchangeAdapter):
         )
 
     def set_leverage(self, symbol: str, leverage: float) -> None:
-        self._client.set_leverage(int(leverage), symbol)
+        # BingX requires a side argument for setLeverage. The picks may go
+        # long or short, so set the same leverage for both. We try BOTH
+        # first (one-way / hedge-disabled mode); if rejected, fall back to
+        # setting LONG and SHORT individually (hedge mode).
+        try:
+            self._client.set_leverage(int(leverage), symbol, params={"side": "BOTH"})
+        except Exception:
+            self._client.set_leverage(int(leverage), symbol, params={"side": "LONG"})
+            self._client.set_leverage(int(leverage), symbol, params={"side": "SHORT"})
 
 
 # -- helpers ------------------------------------------------------------------
