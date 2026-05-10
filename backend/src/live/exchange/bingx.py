@@ -156,7 +156,12 @@ class BingXAdapter(ExchangeAdapter):
     # -- write methods ------------------------------------------------------
 
     def place_order(self, symbol: str, request: OrderRequest) -> Order:
-        params: dict[str, Any] = {}
+        params: dict[str, Any] = {
+            # BingX hedge mode requires positionSide. For opening orders,
+            # buy→LONG, sell→SHORT. (One-way mode accepts BOTH but the
+            # VST default is hedge, so this keeps both working.)
+            "positionSide": "LONG" if request.side == "buy" else "SHORT",
+        }
         if request.stop_loss is not None:
             params["stopLoss"] = {
                 "type": "STOP_MARKET",
@@ -213,8 +218,12 @@ class BingXAdapter(ExchangeAdapter):
             raise ValueError(f"position {position_id} not found at exchange")
         qty = float(target.size) * float(fraction)
         side = "sell" if target.side == "long" else "buy"
+        # In hedge mode the closing order's positionSide must match the
+        # position being reduced (NOT the market-order side).
+        position_side = "LONG" if target.side == "long" else "SHORT"
         r = self._client.create_market_order(
-            symbol, side, qty, params={"reduceOnly": True},
+            symbol, side, qty,
+            params={"reduceOnly": True, "positionSide": position_side},
         )
         return Order(
             id=str(r["id"]),
