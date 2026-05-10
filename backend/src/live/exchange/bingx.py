@@ -93,10 +93,20 @@ class BingXAdapter(ExchangeAdapter):
 
     def fetch_balance(self) -> Balance:
         bal = self._client.fetch_balance()
-        usdt = bal.get("USDT", {}) if isinstance(bal, dict) else {}
-        total = float(usdt.get("total", 0.0) or 0.0)
-        free = float(usdt.get("free", 0.0) or 0.0)
-        used = float(usdt.get("used", 0.0) or 0.0)
+        # BingX VST accounts denominate in "VST" instead of "USDT".
+        # In live mode we want USDT; in demo we want VST. Try the
+        # mode-appropriate key first, then fall back to whichever
+        # asset has a nonzero total (graceful for either setup).
+        asset = "VST" if self._mode == "demo" else "USDT"
+        entry = bal.get(asset, {}) if isinstance(bal, dict) else {}
+        if not entry:
+            for k, v in (bal or {}).items():
+                if isinstance(v, dict) and (v.get("total") or 0):
+                    entry = v
+                    break
+        total = float(entry.get("total", 0.0) or 0.0)
+        free = float(entry.get("free", 0.0) or 0.0)
+        used = float(entry.get("used", 0.0) or 0.0)
         return Balance(total=total, available=free, used=used)
 
     def fetch_positions(self, symbol: str) -> list[Position]:
