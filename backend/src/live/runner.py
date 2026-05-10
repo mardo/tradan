@@ -150,6 +150,7 @@ class _LiveContext:
     last_processed_close: int   # ms timestamp
     last_pnl_snapshot_at: float # monotonic seconds
     consecutive_errors: int
+    last_klines_seen_at: float  # monotonic seconds; updated on each non-empty klines fetch
 
 
 class _GracefulExit(Exception):
@@ -224,6 +225,7 @@ def run_live(*, config_path: str, dry_run: bool = False) -> int:
             last_processed_close=seed_last_close,
             last_pnl_snapshot_at=time.monotonic(),
             consecutive_errors=0,
+            last_klines_seen_at=time.monotonic(),
         )
 
         _install_signal_handlers()
@@ -242,6 +244,17 @@ def _loop(ctx: _LiveContext) -> int:
             if os.environ.get(ctx.cfg.risk.kill_switch_env, "").lower() == "true":
                 _shutdown(ctx, reason="kill_switch")
                 return 0
+
+            # 1b. stale-feed check: stop if no new kline arrived within 2× interval
+            stale = time.monotonic() - ctx.last_klines_seen_at
+            if stale > 2 * (ctx.interval_ms / 1000.0):
+                log_action(
+                    ctx.conn, live_run_id=ctx.run_id, event_type="error",
+                    account_state={},
+                    notes=f"no new candle for {stale:.0f}s; expected interval {ctx.interval_ms/1000.0:.0f}s",
+                )
+                _shutdown(ctx, reason="error")
+                return 1
 
             # 2. fetch latest klines, detect new candle
             try:
@@ -267,6 +280,7 @@ def _loop(ctx: _LiveContext) -> int:
                 time.sleep(_POLL_SECONDS)
                 continue
 
+            ctx.last_klines_seen_at = time.monotonic()
             newest_close = klines[-1].open_time_ms + ctx.interval_ms
             if newest_close > ctx.last_processed_close:
                 _on_new_candle(ctx, klines)
