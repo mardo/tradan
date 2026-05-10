@@ -221,9 +221,13 @@ class BingXAdapter(ExchangeAdapter):
         # In hedge mode the closing order's positionSide must match the
         # position being reduced (NOT the market-order side).
         position_side = "LONG" if target.side == "long" else "SHORT"
+        # In hedge mode, positionSide alone identifies which position to
+        # reduce; reduceOnly is rejected. (One-way mode would use
+        # reduceOnly=True without positionSide.) The VST default is hedge,
+        # so we go with positionSide-only.
         r = self._client.create_market_order(
             symbol, side, qty,
-            params={"reduceOnly": True, "positionSide": position_side},
+            params={"positionSide": position_side},
         )
         return Order(
             id=str(r["id"]),
