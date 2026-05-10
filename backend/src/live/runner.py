@@ -254,11 +254,26 @@ def _loop(ctx: _LiveContext) -> int:
                 return 1
 
             # 2. fetch latest klines, detect new candle
+            #
+            # ccxt's fetch_ohlcv includes the still-open current candle as the
+            # last entry. We must drop it so inference fires on CLOSED candles
+            # only — otherwise the model decides on partial OHLCV with a future
+            # close timestamp. We request lookback+1 to ensure we still have a
+            # full lookback window after dropping.
             try:
-                klines = ctx.adapter.fetch_klines(
+                raw = ctx.adapter.fetch_klines(
                     ctx.cfg.market.symbol, ctx.cfg.market.interval,
-                    limit=ctx.model_config.lookback_window,
+                    limit=ctx.model_config.lookback_window + 1,
                 )
+                now_ms = int(time.time() * 1000)
+                klines = [
+                    k for k in raw
+                    if k.open_time_ms + ctx.interval_ms <= now_ms
+                ]
+                # Truncate to exactly the lookback window if we got more
+                # closed candles than needed.
+                if len(klines) > ctx.model_config.lookback_window:
+                    klines = klines[-ctx.model_config.lookback_window:]
                 ctx.consecutive_errors = 0
             except Exception as e:
                 ctx.consecutive_errors += 1
@@ -273,7 +288,9 @@ def _loop(ctx: _LiveContext) -> int:
                 time.sleep(_POLL_SECONDS)
                 continue
 
-            if not klines:
+            if len(klines) < ctx.model_config.lookback_window:
+                # Either the filter dropped too many or BingX returned a short
+                # window. Wait for the next poll rather than crash inference.
                 time.sleep(_POLL_SECONDS)
                 continue
 
