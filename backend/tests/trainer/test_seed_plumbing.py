@@ -103,3 +103,34 @@ def test_phase4a_builder_produces_15_configs():
         assert c.algorithm == "A2C"
         assert c.learning_rate == 3e-4
         assert c.total_timesteps == 1_000_000
+
+
+def test_phase4c_entropy_builder_produces_5_configs():
+    import importlib.util
+    import pathlib
+
+    backend_root = pathlib.Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location(
+        "sweep_phase4c_entropy", backend_root / "scripts" / "sweep_phase4c_entropy.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    configs = mod.build_phase4c_entropy_configs()
+    assert len(configs) == 5
+
+    expected_names = sorted(
+        f"btc_4h_a2c_lb500_3em4_ent01_p4c_s{s}" for s in range(5)
+    )
+    assert sorted(c.name for c in configs) == expected_names
+
+    # Seeds match the 4A run for paired comparison; ent_coef and timesteps fixed.
+    expected_seeds = {1001, 2002, 3003, 4004, 5005}
+    assert {c.seed for c in configs} == expected_seeds
+    for c in configs:
+        assert c.lookback_window == 500
+        assert c.intervals == ["4h"]
+        assert c.algorithm == "A2C"
+        assert c.learning_rate == 3e-4
+        assert c.ent_coef == 0.01
+        assert c.total_timesteps == 2_000_000
