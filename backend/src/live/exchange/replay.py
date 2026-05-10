@@ -70,6 +70,12 @@ class ReplayAdapter(ExchangeAdapter):
     def sim(self) -> ExchangeSim:
         return self._state.sim
 
+    @property
+    def context_features(self) -> np.ndarray:
+        """The full historical feature array, used as the normalization
+        context (matches the trainer's whole-slice stats fitting)."""
+        return self._state.features
+
     def advance(self) -> None:
         st = self._state
         idx = st.cursor

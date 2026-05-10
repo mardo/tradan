@@ -14,7 +14,7 @@ from live.exchange.base import Order as LiveOrder
 from live.exchange.base import Position as LivePosition
 from trainer.env.exchange_sim import Order as SimOrder
 from trainer.env.exchange_sim import Position as SimPosition
-from trainer.env.normalization import NormalizationStats
+from trainer.env.normalization import NormalizationStats, fit_stats
 from trainer.env.observation import (
     ObservationConfig,
     ObservationInputs,
@@ -71,14 +71,23 @@ def build_live_observation(
     balance: Balance,
     positions: list[LivePosition],
     open_orders: list[LiveOrder],
-    stats: NormalizationStats,
     obs_cfg: ObservationConfig,
+    context_features: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
+    """Build the observation dict.
+
+    Stats are fit from context_features if provided, otherwise from the
+    kline window features. Replay passes the full historical slice as
+    context (matches trainer eval); live passes the lookback (no broader
+    context available in real time).
+    """
     raw = klines_to_features(klines, columns)
     if raw.shape[0] != obs_cfg.lookback:
         raise ValueError(
             f"got {raw.shape[0]} klines, need {obs_cfg.lookback}"
         )
+    stats_source = context_features if context_features is not None else raw
+    stats = fit_stats(stats_source)
     market = normalize(raw, stats)
     close = float(klines[-1].close) if klines and klines[-1].close > 0 else 1.0
 

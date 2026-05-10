@@ -14,7 +14,6 @@ from live.feature_pipeline import build_live_observation
 from live.model_runner import ModelRunner
 from trainer.config import ModelConfig
 from trainer.env.action_decoder import DecoderState, decode_action
-from trainer.env.normalization import NormalizationStats, load_stats
 from trainer.env.observation import ObservationConfig
 
 
@@ -29,7 +28,6 @@ def run_replay(
     adapter: ReplayAdapter,
     model_runner: ModelRunner,
     model_config: ModelConfig,
-    stats: NormalizationStats,
     max_position_size_pct: float = 1.0,
     max_leverage: float = 125.0,
 ) -> ReplayResult:
@@ -72,7 +70,8 @@ def run_replay(
         obs = build_live_observation(
             klines=klines, columns=model_config.columns,
             balance=balance, positions=positions, open_orders=open_orders,
-            stats=stats, obs_cfg=obs_cfg,
+            obs_cfg=obs_cfg,
+            context_features=adapter.context_features,
         )
         result = model_runner.predict(obs)
 
@@ -141,7 +140,6 @@ class _LiveContext:
     adapter: ExchangeAdapter
     model_runner: ModelRunner
     model_config: ModelConfig
-    stats: NormalizationStats
     obs_cfg: ObservationConfig
     conn: psycopg.Connection
     run_id: int
@@ -178,7 +176,6 @@ def run_live(*, config_path: str, dry_run: bool = False) -> int:
         model_id, model_cfg = _load_model_cfg(conn, cfg.model.name)
         models_dir = Path(os.environ.get("MODELS_DIR", "/var/lib/tradan/models"))
         model_path = _resolve_model_path(conn, model_id, models_dir, cfg.model.name)
-        stats = load_stats(model_path.with_suffix(""))
         model_runner = ModelRunner(
             model_path=model_path, algorithm=model_cfg.algorithm,
         )
@@ -219,7 +216,7 @@ def run_live(*, config_path: str, dry_run: bool = False) -> int:
 
         ctx = _LiveContext(
             cfg=cfg, adapter=adapter, model_runner=model_runner,
-            model_config=model_cfg, stats=stats, obs_cfg=obs_cfg,
+            model_config=model_cfg, obs_cfg=obs_cfg,
             conn=conn, run_id=run_id, dry_run=dry_run,
             interval_ms=_interval_to_ms(cfg.market.interval),
             last_processed_close=seed_last_close,
@@ -321,7 +318,7 @@ def _on_new_candle(ctx: _LiveContext, klines: list[Kline]) -> None:
     obs = build_live_observation(
         klines=klines, columns=ctx.model_config.columns,
         balance=bal, positions=positions, open_orders=open_orders,
-        stats=ctx.stats, obs_cfg=ctx.obs_cfg,
+        obs_cfg=ctx.obs_cfg,
     )
     pred = ctx.model_runner.predict(obs)
 

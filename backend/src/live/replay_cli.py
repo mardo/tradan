@@ -16,10 +16,11 @@ size of the look-ahead artifact for this model — not a code bug.
 Status: depends on
   1. DATABASE_URL pointing at the tradan DB (model_configs, training_runs, klines).
   2. MODELS_DIR env (or --models-dir) pointing at the directory containing
-     <model>/<run_id>/model.zip and the matching mean.npy / std.npy.
-  3. Phase A.4 part 3 (evaluator wired to load_stats) and A.10 (re-baselined
-     training_runs.final_balance values). Without those, the 'expected' value
-     reflects eval-time normalization stats, not train-time.
+     <model>/<run_id>/model.zip.
+
+Normalization: both replay and eval fit stats from their respective kline
+slices (window-fit stats). Saved mean.npy / std.npy files are debug records
+only and are not loaded at runtime.
 """
 from __future__ import annotations
 
@@ -37,7 +38,6 @@ from live.exchange.replay import ReplayAdapter
 from live.model_runner import ModelRunner
 from live.runner import run_replay
 from trainer.config import ModelConfig
-from trainer.env.normalization import load_stats
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -131,11 +131,7 @@ def main(argv: list[str] | None = None) -> int:
             columns=cfg.columns,
         )
 
-    # The model path stored in training_runs is the absolute path to model.zip;
-    # mean.npy / std.npy live alongside it.
     model_path = Path(model_path_str)
-    stats_base = model_path.with_suffix("")   # strip .zip → /…/<run_id>/model
-    stats = load_stats(stats_base)
 
     adapter = ReplayAdapter.from_arrays(
         timestamps=ts,
@@ -155,7 +151,6 @@ def main(argv: list[str] | None = None) -> int:
         adapter=adapter,
         model_runner=model_runner,
         model_config=cfg,
-        stats=stats,
     )
 
     diff = abs(result.final_equity - expected)
