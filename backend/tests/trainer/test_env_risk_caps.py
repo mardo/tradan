@@ -36,9 +36,107 @@ def test_compute_leverage_clamps_to_default_max():
 
 
 # ---------- Fix 2: max_position_size_pct ------------------------------------
+
+
+@pytest.fixture
+def minimal_env() -> TradingEnv:
+    """A TradingEnv with a tiny synthetic DataFeed, just enough to call step()
+    and exercise _process_actions. 2 orders / 2 positions max keeps the action
+    vector small; 3 TP levels matches the env default."""
+    n_candles = 60
+    rng = np.random.default_rng(0)
+    closes = 50_000.0 + rng.normal(0, 100, n_candles).cumsum()
+    features = np.stack(
+        [
+            closes,                                          # open
+            closes + 50.0,                                   # high
+            closes - 50.0,                                   # low
+            closes,                                          # close
+            np.full(n_candles, 1_000.0),                     # volume
+        ],
+        axis=1,
+    ).astype(np.float32)
+    feed = DataFeed(
+        timestamps=np.arange(n_candles, dtype=np.int64),
+        features=features,
+        lookback=10,
+        price_columns={"open": 0, "high": 1, "low": 2, "close": 3, "volume": 4},
+    )
+    config = ModelConfig(
+        name="risk_caps_test",
+        symbols=["BTCUSDT"],
+        intervals=["4h"],
+        columns=["open", "high", "low", "close", "volume"],
+        exchange=ExchangeConfig(max_open_orders=2, max_open_positions=2),
+        lookback_window=10,
+        num_tp_levels=3,
+    )
+    return TradingEnv(config=config, data_feed=feed)
+
+
+def _make_open_action(env: TradingEnv, *, size_raw: float) -> np.ndarray:
+    """Build an action vector that requests opening a long position with the
+    given size_raw (in [0, 1]). Other action components are neutral."""
+    a = np.zeros(env.config.action_size, dtype=np.float32)
+    a[0] = 1.0   # open_conf > 0.5
+    a[1] = 1.0   # direction long
+    a[2] = 0.0   # offset 0
+    a[3] = 0.0   # mid SL (neutral)
+    # TP prices and sizes default to neutral (zero) — env clamps to safe values
+    # action[4..4+num_tp-1] = tp prices
+    # action[4+num_tp..4+2*num_tp-1] = tp sizes
+    size_idx = 4 + 2 * env.config.num_tp_levels
+    a[size_idx] = float(size_raw * 2.0 - 1.0)  # invert (action+1)/2 mapping
+    return a
+
+
+def test_position_size_capped_to_max_position_size_pct(minimal_env: TradingEnv):
+    """size_raw=1.0 must NOT result in a position margined at full available_balance.
+    The env caps it at max_position_size_pct * available_balance."""
+    env = minimal_env
+    env.reset()
+    initial_avail = env.account.available_balance
+    expected_cap = env.config.exchange.max_position_size_pct * initial_avail
+
+    action = _make_open_action(env, size_raw=1.0)  # request full balance
+    env.step(action)
+
+    assert len(env.exchange.open_orders) == 1, (
+        "expected the order to be placed (at the cap, not rejected)"
+    )
+    placed_margin = env.exchange.open_orders[0].margin
+    # The cap clamps margin to max_position_size_pct * available_balance.
+    # Equality with a small tolerance (fees may be applied to balance first).
+    # rel=1e-5 absorbs float32 round-trip noise from the action vector.
+    assert placed_margin == pytest.approx(expected_cap, rel=1e-5), (
+        f"expected margin {expected_cap}, got {placed_margin}"
+    )
+
+
+def test_position_size_below_cap_is_unchanged(minimal_env: TradingEnv):
+    """size_raw=0.1 (below the 25% cap) must place at exactly that requested
+    fraction — the cap doesn't squeeze trades that are already small."""
+    env = minimal_env
+    env.reset()
+    initial_avail = env.account.available_balance
+
+    action = _make_open_action(env, size_raw=0.1)
+    env.step(action)
+
+    assert len(env.exchange.open_orders) == 1
+    placed_margin = env.exchange.open_orders[0].margin
+    assert placed_margin == pytest.approx(0.1 * initial_avail, rel=1e-5)
+
+
+def test_exchange_config_default_max_position_size_pct_is_quarter():
+    cfg = ExchangeConfig()
+    assert cfg.max_position_size_pct == 0.25
+
+
+# ---------- Fix 3: max_drawdown_pct -----------------------------------------
 #
-# Implemented in trading_env._process_actions: margin is clamped to
-# max_position_size_pct * available_balance regardless of the action vector.
+# Implemented in trading_env.step(): trailing peak_equity tracked; episode
+# terminates when equity drops below peak * (1 - max_drawdown_pct).
 
 
 # ---------- Fix 3: max_drawdown_pct -----------------------------------------

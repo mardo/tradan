@@ -177,6 +177,11 @@ class TradingEnv(gym.Env):
 
             size_raw = (action[4 + 2 * num_tp] + 1.0) / 2.0
             margin = size_raw * self.account.available_balance
+            # Phase 4 env audit (Fix 2): cap per-trade margin so a single position
+            # cannot consume more than max_position_size_pct of available balance.
+            margin_cap = exc.max_position_size_pct * self.account.available_balance
+            if margin > margin_cap:
+                margin = margin_cap
 
             if margin >= self.config.exchange.min_order_size_usd:
                 order = self.exchange.place_order(

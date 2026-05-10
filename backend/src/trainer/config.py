@@ -33,6 +33,17 @@ class ExchangeConfig:
     max_open_positions: int = 20
     # Minimum notional value (margin × leverage) for an order to be accepted.
     min_order_size_usd: float = 10.0
+    # Maximum fraction of available balance committed to a single position. Added
+    # in the Phase 4 env audit (Fix 2): the prior behavior allowed margin =
+    # size_raw * available_balance, i.e. a model could put 100% on one trade.
+    # Combined with high leverage, that wiped accounts on a single move. The cap
+    # is enforced in TradingEnv._process_actions before place_order.
+    max_position_size_pct: float = 0.25
+    # Maximum trailing drawdown from peak equity before the episode terminates.
+    # Added in the Phase 4 env audit (Fix 3): the prior env terminated only at
+    # equity <= 0, giving the policy no early signal that a strategy was failing.
+    # Enforced in TradingEnv.step() against a peak_equity tracker.
+    max_drawdown_pct: float = 0.5
 
     def to_dict(self) -> dict:
         return {
@@ -45,6 +56,8 @@ class ExchangeConfig:
             "max_open_orders": self.max_open_orders,
             "max_open_positions": self.max_open_positions,
             "min_order_size_usd": self.min_order_size_usd,
+            "max_position_size_pct": self.max_position_size_pct,
+            "max_drawdown_pct": self.max_drawdown_pct,
         }
 
     @classmethod
