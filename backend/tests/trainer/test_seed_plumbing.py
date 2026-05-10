@@ -50,6 +50,23 @@ def test_train_model_passes_seed_to_algo_constructor():
     )
 
 
+def test_train_model_conditionally_passes_ent_coef():
+    """train_model must conditionally forward config.ent_coef to algo_cls(...).
+
+    Conditional because SAC's ent_coef defaults to 'auto' (learnable) and
+    forcing it to 0.0 would silently break SAC. Gating on ent_coef > 0 keeps
+    the SB3 default in place for any algo when the field is unset.
+    """
+    src = inspect.getsource(trainer_mod.train_model)
+    assert "config.ent_coef" in src, (
+        "train_model must reference config.ent_coef in its algo construction."
+    )
+    assert "config.ent_coef > 0" in src, (
+        "train_model must gate ent_coef pass-through on `config.ent_coef > 0` "
+        "to preserve SB3's algo-specific defaults (especially SAC's 'auto')."
+    )
+
+
 def test_phase4a_builder_produces_15_configs():
     import importlib.util
     import pathlib

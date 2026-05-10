@@ -291,12 +291,19 @@ def train_model(
             label=f"{config.name} #{run_id}",
         )
 
+        algo_kwargs: dict = {}
+        # Only override SB3's per-algo ent_coef default when the user opts in.
+        # SAC's 'auto' default is a learnable schedule we don't want to clobber.
+        if config.ent_coef > 0:
+            algo_kwargs["ent_coef"] = config.ent_coef
+
         model = algo_cls(
             "MultiInputPolicy",
             env,
             learning_rate=config.learning_rate,
             seed=config.seed,
             verbose=0,
+            **algo_kwargs,
         )
         model.learn(
             total_timesteps=total_timesteps,
