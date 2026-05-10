@@ -196,6 +196,9 @@ def run_live(*, config_path: str, dry_run: bool = False) -> int:
         if existing is not None:
             run_id = existing
             _do_reconciliation(conn, adapter, run_id, cfg.market.symbol)
+            seed_last_close = _last_processed_close_ms(
+                conn, run_id, _interval_to_ms(cfg.market.interval),
+            )
         else:
             with conn.transaction():
                 run_id = start_run(
@@ -206,6 +209,7 @@ def run_live(*, config_path: str, dry_run: bool = False) -> int:
                     config_yaml=Path(config_path).read_text(),
                     git_sha=_git_sha(),
                 )
+            seed_last_close = 0
 
         try:
             adapter.set_leverage(cfg.market.symbol, cfg.risk.max_leverage)
@@ -217,7 +221,7 @@ def run_live(*, config_path: str, dry_run: bool = False) -> int:
             model_config=model_cfg, stats=stats, obs_cfg=obs_cfg,
             conn=conn, run_id=run_id, dry_run=dry_run,
             interval_ms=_interval_to_ms(cfg.market.interval),
-            last_processed_close=0,
+            last_processed_close=seed_last_close,
             last_pnl_snapshot_at=time.monotonic(),
             consecutive_errors=0,
         )
@@ -590,6 +594,28 @@ def _approx_leverage(open_intent: OpenIntent, ctx: _LiveContext) -> float:
     buf = ctx.model_config.exchange.liquidation_buffer_pct / 100.0
     lev = 1.0 / (sl_dist + buf + mm)
     return min(lev, ctx.cfg.risk.max_leverage)
+
+
+def _last_processed_close_ms(
+    conn: psycopg.Connection, run_id: int, interval_ms: int,
+) -> int:
+    """Most recent inference candle_close for this run, in ms epoch.
+
+    Used on resume so the runner doesn't re-fire inference on a candle that
+    was already processed pre-crash. Returns 0 if no inference rows exist yet.
+    """
+    row = conn.execute(
+        """
+        SELECT candle_close FROM live_actions
+        WHERE live_run_id = %s AND event_type = 'inference' AND candle_close IS NOT NULL
+        ORDER BY candle_close DESC LIMIT 1
+        """,
+        (run_id,),
+    ).fetchone()
+    if row is None or row[0] is None:
+        return 0
+    # candle_close is stored as TIMESTAMPTZ; convert to ms epoch.
+    return int(row[0].timestamp() * 1000)
 
 
 def _load_model_cfg(conn: psycopg.Connection, name: str) -> tuple[int, ModelConfig]:
