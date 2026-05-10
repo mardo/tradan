@@ -14,6 +14,7 @@ from trainer.db import (
     save_pnl_snapshots,
 )
 from trainer.env.data_feed import DataFeed, load_data_feed
+from trainer.env.normalization import load_stats
 from trainer.env.trading_env import TradingEnv
 from trainer.training.trainer import ALGO_MAP, MODELS_DIR, compute_metrics
 
@@ -43,6 +44,11 @@ def evaluate_model(
         finally:
             conn.close()
 
+        # Load train-time normalization stats from the model's directory.
+        # mean.npy and std.npy live alongside model.zip per the trainer save convention.
+        stats_base = Path(model_path).with_suffix("")
+        train_stats = load_stats(stats_base)
+
         split_idx = int(data_feed.total_steps * 0.8)
         holdout_start = split_idx
         holdout_timestamps = data_feed.timestamps[holdout_start:]
@@ -53,6 +59,7 @@ def evaluate_model(
             features=holdout_features,
             lookback=config.lookback_window,
             price_columns=data_feed.price_columns,
+            stats=train_stats,
         )
 
         env = TradingEnv(config=config, data_feed=holdout_feed)
