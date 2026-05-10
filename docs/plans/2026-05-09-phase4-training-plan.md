@@ -99,6 +99,50 @@ Five sub-phases, ordered by recommended priority. 4A and 4E are highest value; 4
 - **Success criterion**: median holdout PnL > 0 AND ≥3 of 5 seeds positive.
 - Architectures that fail this should not be promoted — period.
 
+**Outcome (executed 2026-05-09):**
+
+Implementation: see `docs/plans/2026-05-09-phase4a-seed-robustness.md`. Key changes:
+- Added `ModelConfig.seed: int | None`; previously the `SEEDS = [42, 123, 456]` lists in P1/P2/P3 sweeps were declared but never passed to SB3 — variance came from non-deterministic torch/numpy init alone.
+- Forwarded the seed to the SB3 algorithm (`seed=config.seed`) in `train_model`.
+- Registered 15 configs `btc_4h_a2c_lb{100,250,500}_3em4_p4a_s{0..4}` with seeds `[1001, 2002, 3003, 4004, 5005]`. Each seed value is reused across the three lookbacks (so `_s0` always = 1001), giving paired-design control of seed luck across architectures.
+
+Decision matrix (`scripts/phase4a_summary.py`):
+
+| arch  | seeds | pos | median PnL  | P2 median   | decision |
+|-------|-------|-----|-------------|-------------|----------|
+| lb100 | 5     | 0   | -$2,378     | -$7,881     | **FAIL** |
+| lb250 | 5     | 1   | -$10,510    | $0          | **FAIL** |
+| lb500 | 5     | 0   | -$10,155    | +$3,465     | **FAIL** |
+
+Per-seed holdout detail:
+
+| name                          | pnl     | sharpe | dd %  | trades | seed |
+|-------------------------------|--------:|-------:|------:|-------:|-----:|
+| lb100_p4a_s0                  |    -596 |  -2.05 |   6.0 |      2 | 1001 |
+| lb100_p4a_s1                  |  -4,851 |  -2.63 |  48.5 |     45 | 2002 |
+| lb100_p4a_s2                  | -28,365 |  -6.51 | 283.6 |      5 | 3003 |
+| lb100_p4a_s3                  |    -217 |  -1.49 |   2.2 |      1 | 4004 |
+| lb100_p4a_s4                  |  -2,378 |  -1.46 |  25.0 |      5 | 5005 |
+| lb250_p4a_s0                  |       0 |   0.00 |   0.0 |      0 | 1001 |
+| lb250_p4a_s1                  | -12,116 |  -3.33 | 111.0 |    100 | 2002 |
+| lb250_p4a_s2                  |  +2,782 |   1.01 |  15.5 |     14 | 3003 |
+| lb250_p4a_s3                  | -11,567 |  -3.72 | 115.0 |     43 | 4004 |
+| lb250_p4a_s4                  | -10,510 |  -3.15 | 105.1 |      7 | 5005 |
+| lb500_p4a_s0                  |  -5,195 |  -0.87 |  71.7 |     54 | 1001 |
+| lb500_p4a_s1                  | -10,155 |  -3.53 | 101.6 |     33 | 2002 |
+| lb500_p4a_s2                  | -10,316 |  -3.88 | 102.7 |     10 | 3003 |
+| lb500_p4a_s3                  | -11,703 |  -3.47 | 117.0 |      6 | 4004 |
+| lb500_p4a_s4                  |  -7,428 |   0.23 |  93.7 |    117 | 5005 |
+
+**Verdict:** all three architectures fail the pass criterion. Only 1 of 15 holdout evals (lb250_p4a_s2, +$2,782) is profitable. Drawdowns above 100% indicate full account blow-ups under leverage.
+
+Training-time PnL (where some seeds had +$22K to +$135K) does not survive holdout. The original P2 winners (`lb500_3em4_p2_s1` +$126K, `lb100_3em4_p2_s0` +$8.8K, `lb500_3em4_p2_s0` +$3.5K) were almost certainly seed-luck artifacts of unseeded init — under explicit seeded training, the same architectures produce uniformly losing or do-nothing policies on holdout.
+
+**Implication for promotion plan:** the original "Pick 1 + Pick 2" promotion list is invalidated. **No model from these three architectures should be paper-traded based on Phase 1–3 results alone.** A successful 4A pass — or stronger evidence from 4B walk-forward — is required before committing live capital, even on devnet test tokens.
+
+Operational notes for future sweeps:
+- The systemd watchdog (`tradan-train-worker-health.service`) repeatedly restarts `train worker`, but the worker's in-process loop has a `torch.set_num_interop_threads` constraint that fails on the 2nd model in a single process. The watchdog respawn pattern accidentally works around this (one model per process), but only at the cost of 120-min stale-claim waits when many configs claim simultaneously. For 4A I bypassed the watchdog with a sequential `train start` driver script (`/tmp/p4a_drive.sh`); future sweeps should either fix the trainer (catch the RuntimeError or guard via flag) or use the same per-process driver.
+
 ### 4B — Walk-forward eval (highest robustness ROI)
 **Goal:** replace the single 16-month holdout with 6+ rolling out-of-sample windows.
 
@@ -152,11 +196,8 @@ Constraints:
 
 ## Open decisions
 
-- [ ] Confirm the 3 models to promote (default: Pick 1 + Pick 2; Pick 3 optional)
-- [ ] Phase 4A or 4E first?
-  - 4A first = cheap robustness data before committing engineering effort.
-  - 4E first = start collecting live data while Phase 4A trains in parallel.
-  - Recommendation: **4A and 4E in parallel** — 4A is unattended GPU/CPU work; 4E is human engineering.
+- [x] Confirm the 3 models to promote — **none**. 4A failed all three architectures; the prior "Pick 1 + Pick 2" list was seed-luck and is rejected. Promotion is blocked until either (a) an architecture passes a re-run of 4A (e.g. with entropy regularization per 4C) or (b) walk-forward (4B) provides multi-window evidence that the original P2 winners are robust across regimes.
+- [x] Phase 4A or 4E first? — **4A done first**, as recommended. Outcome above. 4E should not be started until at least one architecture passes the seed-robustness gate.
 - [ ] Walk-forward window size for 4B — 3, 6, or 12 month eval blocks?
 - [ ] Devnet → mainnet promotion criteria — minimum live duration, max acceptable drift between live PnL and backtest expectation?
 
