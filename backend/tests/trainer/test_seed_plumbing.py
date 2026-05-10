@@ -105,6 +105,53 @@ def test_phase4a_builder_produces_15_configs():
         assert c.total_timesteps == 1_000_000
 
 
+def test_phase4d_env_audit_builder_produces_15_configs():
+    import importlib.util
+    import pathlib
+
+    backend_root = pathlib.Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location(
+        "sweep_phase4d_env_audit",
+        backend_root / "scripts" / "sweep_phase4d_env_audit.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    configs = mod.build_phase4d_configs()
+    # Same shape as 4A: 3 architectures × 5 seeds.
+    assert len(configs) == 15
+
+    expected_names = sorted(
+        f"btc_4h_a2c_lb{lb}_3em4_p4d_s{s}"
+        for lb in (100, 250, 500)
+        for s in range(5)
+    )
+    assert sorted(c.name for c in configs) == expected_names
+
+    # Seeds match 4A for paired comparison.
+    expected_seeds = {1001, 2002, 3003, 4004, 5005}
+    seeds_by_lb: dict[int, set[int]] = {}
+    for c in configs:
+        seeds_by_lb.setdefault(c.lookback_window, set()).add(c.seed)
+    for lb, seeds in seeds_by_lb.items():
+        assert seeds == expected_seeds, f"lb={lb} seeds: {seeds}"
+
+    # Critical: 4D's whole point is the new env caps. Each config must carry
+    # the new (post-audit) defaults baked into its ExchangeConfig.
+    for c in configs:
+        assert c.exchange.max_leverage == 10.0
+        assert c.exchange.max_position_size_pct == 0.25
+        assert c.exchange.max_drawdown_pct == 0.5
+
+    for c in configs:
+        assert c.intervals == ["4h"]
+        assert c.algorithm == "A2C"
+        assert c.learning_rate == 3e-4
+        assert c.total_timesteps == 1_000_000
+        # ent_coef stays at default (0.0) — 4D tests env-only effect.
+        assert c.ent_coef == 0.0
+
+
 def test_phase4c_entropy_builder_produces_5_configs():
     import importlib.util
     import pathlib
