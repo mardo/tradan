@@ -208,7 +208,124 @@ Operational note: env code drift between branches caused an apples-to-oranges ha
 - 3 seeds each × 1M timesteps.
 - Wall-clock: ~3h (1h is similar load; 1d is faster due to fewer episodes).
 
-### 4E — Live inference bridge
+### 4E — Idle-step penalty (env audit follow-up)
+**Goal:** address the F4 finding from the env audit (reward = Δ equity has no risk shaping) with the simplest possible slice — penalize idle steps to discourage policy collapse to "do nothing". This is Idea 1 from a three-idea menu (also: trade-completion bonus, Sharpe-shaped reward); Ideas 2 and 3 are deferred.
+
+- For each of the three architectures (lb100/250/500) at A2C, lr=3e-4, 1M timesteps under the env audit caps (max_leverage=10, max_position_size_pct=0.25, max_drawdown_pct=0.5), run 5 paired seeds at each of two penalty magnitudes:
+  - 0.05 USD/step (~5 bps/step at $10K notional) — light pressure
+  - 0.5  USD/step (~50 bps/step) — strong pressure
+- Total: 3 archs × 2 values × 5 seeds = 30 runs at 1M timesteps.
+- **Success criterion** (per cell): median holdout PnL > 0 AND ≥3 of 5 seeds positive.
+
+**4E Outcome (executed 2026-05-11):**
+
+Implementation: see `docs/plans/2026-05-10-phase4-env-audit-design.md` for the parent F4 finding. Added `ExchangeConfig.idle_step_penalty_usd` (default 0.0, additive penalty subtracted from the Δ-equity reward when both `open_positions` and `open_orders` are empty). Default 0 preserves all pre-4E configs bit-for-bit.
+
+Decision matrix (`scripts/phase4e_idle_penalty_summary.py`):
+
+| arch × penalty | seeds | pos | median PnL  | 4D median  | decision |
+|----------------|------:|----:|------------:|-----------:|----------|
+| lb100 × 0.05   |   5   |  0  |    -$1,939  |     -$213  | **FAIL** |
+| lb100 × 0.5    |   5   |  1  |    -$3,803  |     -$213  | **FAIL** |
+| lb250 × 0.05   |   5   |  2  |    -$3,235  |     -$139  | **FAIL** |
+| lb250 × 0.5    |   5   |  0  |    -$5,033  |     -$139  | **FAIL** |
+| lb500 × 0.05   |   5   |  0  |    -$4,572  |   -$5,012  | **FAIL** |
+| lb500 × 0.5    |   5   |  0  |    -$3,543  |   -$5,012  | **FAIL** |
+
+Paired delta per cell (4E – 4D, same env caps + same seeds, only `idle_step_penalty_usd` differs):
+
+| arch × penalty | 4E > 4D | median Δ  | direction |
+|----------------|--------:|----------:|-----------|
+| lb100 × 0.05   |  2/5    |  -$2,391  | **worse** |
+| lb100 × 0.5    |  2/5    |  -$2,080  | **worse** |
+| lb250 × 0.05   |  2/5    |  -$4,022  | **worse** |
+| lb250 × 0.5    |  1/5    |  -$4,953  | **worse** |
+| lb500 × 0.05   |  3/5    |     +$2   | neutral   |
+| lb500 × 0.5    |  3/5    |    +$380  | ~neutral  |
+
+Per-seed holdout detail (4E):
+
+| name                          |    pnl | sharpe | dd %  | trades | seed |
+|-------------------------------|-------:|-------:|------:|-------:|-----:|
+| lb100_idle05_p4e_s0           | -1,584 |   0.57 |  50.7 |     14 | 1001 |
+| lb100_idle05_p4e_s1           | -1,939 |  -0.75 |  30.4 |     15 | 2002 |
+| lb100_idle05_p4e_s2           | -3,339 |  -2.86 |  37.2 |     46 | 3003 |
+| lb100_idle05_p4e_s3           | -5,033 | -16.72 |  50.3 |     16 | 4004 |
+| lb100_idle05_p4e_s4           | -1,047 |  -0.27 |  24.1 |    160 | 5005 |
+| lb100_idle5_p4e_s0            | -3,803 |  -2.64 |  45.6 |     49 | 1001 |
+| lb100_idle5_p4e_s1            | -5,086 |  -3.73 |  50.9 |     82 | 2002 |
+| lb100_idle5_p4e_s2            | -5,053 |  -6.35 |  51.6 |     19 | 3003 |
+| lb100_idle5_p4e_s3            | -2,293 |  -0.71 |  40.3 |     51 | 4004 |
+| lb100_idle5_p4e_s4            |   +553 |   0.52 |  21.7 |     56 | 5005 |
+| lb250_idle05_p4e_s0           |    +52 |   0.24 |  29.1 |     65 | 1001 |
+| lb250_idle05_p4e_s1           | -4,556 |  -2.41 |  50.3 |     17 | 2002 |
+| lb250_idle05_p4e_s2           | +1,262 |   0.99 |  13.9 |    115 | 3003 |
+| lb250_idle05_p4e_s3           | -3,235 |  -1.27 |  42.2 |     76 | 4004 |
+| lb250_idle05_p4e_s4           | -5,190 | -16.77 |  52.4 |     14 | 5005 |
+| lb250_idle5_p4e_s0            | -4,312 |  -2.69 |  45.6 |    187 | 1001 |
+| lb250_idle5_p4e_s1            | -5,092 |  -3.92 |  52.4 |     29 | 2002 |
+| lb250_idle5_p4e_s2            | -3,555 |  -1.61 |  51.8 |     42 | 3003 |
+| lb250_idle5_p4e_s3            | -5,033 |  -7.67 |  50.3 |     22 | 4004 |
+| lb250_idle5_p4e_s4            | -5,065 | -13.56 |  52.3 |     19 | 5005 |
+| lb500_idle05_p4e_s0           | -4,594 |  -2.11 |  50.4 |    275 | 1001 |
+| lb500_idle05_p4e_s1           | -5,075 |  -5.76 |  50.7 |     55 | 2002 |
+| lb500_idle05_p4e_s2           | -4,572 |  -3.16 |  51.1 |    320 | 3003 |
+| lb500_idle05_p4e_s3           |   -905 |  -1.52 |  12.6 |     26 | 4004 |
+| lb500_idle05_p4e_s4           | -3,848 |  -3.32 |  38.5 |     69 | 5005 |
+| lb500_idle5_p4e_s0            | -5,301 |  -5.80 |  53.0 |     42 | 1001 |
+| lb500_idle5_p4e_s1            | -3,543 |  -3.78 |  36.7 |     80 | 2002 |
+| lb500_idle5_p4e_s2            | -5,060 |  -4.55 |  50.6 |     46 | 3003 |
+| lb500_idle5_p4e_s3            | -1,508 |  -1.09 |  19.1 |     91 | 4004 |
+| lb500_idle5_p4e_s4            |   -751 |  -0.78 |  16.7 |    216 | 5005 |
+
+For context, the 4D baseline (same archs, same seeds, no idle penalty — env audit caps only) had its evals run as part of this phase since 4D's trains existed but were never evaluated; full 4D detail:
+
+| name                          |    pnl | sharpe | dd %  | trades | seed |
+|-------------------------------|-------:|-------:|------:|-------:|-----:|
+| lb100_p4d_s0                  |   +807 |   1.09 |   6.9 |     46 | 1001 |
+| lb100_p4d_s1                  | -5,399 |-100.52 |  54.0 |     13 | 2002 |
+| lb100_p4d_s2                  |    +55 |   0.16 |   4.4 |     41 | 3003 |
+| lb100_p4d_s3                  |   -213 |  -1.15 |   2.2 |      4 | 4004 |
+| lb100_p4d_s4                  | -2,003 |  -1.03 |  30.2 |    115 | 5005 |
+| lb250_p4d_s0                  | -4,946 |  -9.45 |  51.2 |     36 | 1001 |
+| lb250_p4d_s1                  |   -139 |  -0.17 |   8.0 |     14 | 2002 |
+| lb250_p4d_s2                  | -1,992 |  -1.21 |  37.3 |     97 | 3003 |
+| lb250_p4d_s3                  |   +788 |   0.59 |  14.7 |     72 | 4004 |
+| lb250_p4d_s4                  |    -55 |  -0.15 |   3.8 |      3 | 5005 |
+| lb500_p4d_s0                  | -2,889 |  -1.58 |  37.5 |    167 | 1001 |
+| lb500_p4d_s1                  | -5,077 |  -4.24 |  50.8 |     36 | 2002 |
+| lb500_p4d_s2                  | -5,439 | -11.33 |  55.0 |     18 | 3003 |
+| lb500_p4d_s3                  |   +399 |   0.46 |  40.0 |    357 | 4004 |
+| lb500_p4d_s4                  | -5,012 |  -3.49 |  50.1 |     23 | 5005 |
+
+4D aggregate: 5 of 15 seeds positive (33%), median per arch lb100/lb250/lb500 = -$213/-$139/-$5,012 — all FAIL the gate as well. 4D is the natural baseline for 4E but was itself never a winning configuration; 4E was a follow-up reward-shaping attempt on top.
+
+**Verdict: all six 4E cells fail the pass criterion. The idle-step penalty hypothesis is rejected.**
+
+Direction of effect:
+- **lb100 and lb250**: penalty makes things significantly worse (median Δ -$2K to -$5K vs 4D). Forcing the policy to trade when it would rather hold creates additional losses, not gains. The "do nothing" failure mode that motivated this experiment was a 4A symptom under the OLD permissive env (max_leverage=125, no caps); under the 4D env caps the policy already trades, so penalizing idleness no longer addresses the actual remaining failure mode (which is uneconomic trading, not insufficient trading).
+- **lb500**: penalty is roughly neutral (median Δ ~0 to +$380). lb500 already trades actively at baseline (4D trade counts 18-357 vs lb100's 4-115); there is no "do nothing" collapse to penalize, so adding the penalty neither helps nor materially hurts.
+
+Aggregate positive-seed counts:
+- 4D: 5 of 15 seeds positive (33%, max +$807)
+- 4E: 3 of 30 seeds positive (10%, max +$1,262)
+
+The penalty cut positive-seed rate by ~3×. Even where individual 4E seeds outperformed (e.g. lb250_idle05_s2 at +$1,262), the cell still failed because only 2/5 seeds crossed zero.
+
+**Implication for plan:** Idea 1 (idle-step penalty) is rejected; do not pursue further magnitudes or hybrid combinations with this lever alone. The remaining ideas from the experiment design are independent of the idle-penalty result:
+
+1. **Trade-completion bonus** (Idea 2) — bonus on closed round-trips, possibly gated on net positive PnL. Selects FOR profitable activity rather than penalizing absence. Cheap to add (same shape as 4E).
+2. **Sharpe-shaped reward** (Idea 3 / F4 proper) — `reward = Δ equity − λ × drawdown_increment`, the design F4 recommended directly. Bigger refactor.
+3. **Higher ent_coef sweep** — 4C confirmed entropy reg systematically improves paired PnL but with diminishing magnitude at 0.01; 0.05 was suggested as a sanity check and remains untried.
+
+If compute is constrained, Idea 2 is the lightest experiment with the most direct hypothesis (target the bad-trading failure mode, not the inactive failure mode). If Idea 2 also fails to clear the gate, that's strong signal that reward shaping alone won't fix this — the issue is closer to the data/architecture choice (4h-A2C-MLP), and Phase 4B walk-forward or a deeper algorithm/architecture change is the right next move.
+
+Operational notes:
+- 4D trains existed in DB but had never been evaluated; the 15-eval baseline pass ran first (~1 min), then the 30 4E evals (~2 min). All 45 evals completed within 3 min.
+- Driver script `/tmp/p4e_drive.sh` (sequential per-process train) ran cleanly through all 30 configs in ~8h wall-clock without watchdog conflict; the watchdog services were already inactive at sweep start.
+- The env-code-drift hazard from the 4C operational notes (train and eval must run on the same branch) was avoided by leaving the host on `main` for both train and eval in this phase.
+
+### 4F — Live inference bridge
 **Goal:** make a saved model actually decide trades on live data.
 
 Architecture:
